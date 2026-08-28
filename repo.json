@@ -1,5 +1,7 @@
 {
   "name": "NAIF Manga Repo",
+  "iconUrl": "https://3asq.online/favicon.ico",
+  "baseUrl": "https://github.com/naif2211/NAIF/raw/refs/heads/main/",
   "plugins": [
     {
       "id": "3asq",
@@ -27,6 +29,15 @@
       "nsfw": false,
       "icon": "https://onma.me/favicon.ico",
       "entry": "onma.plugin.js"
+    },
+    {
+      "id": "azora",
+      "name": "Azora Manga",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://azorafly.com/favicon.ico",
+      "entry": "azora.plugin.js"
     }
   ]
 }
