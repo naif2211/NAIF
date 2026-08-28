@@ -13,15 +13,6 @@
       "entry": "3asq.plugin.js"
     },
     {
-      "id": "olympustaff",
-      "name": "OlympusStaff",
-      "version": "1.0.0",
-      "lang": "ar",
-      "nsfw": false,
-      "icon": "https://olympustaff.com/favicon.ico",
-      "entry": "olympustaff.plugin.js"
-    },
-    {
       "id": "onma",
       "name": "مانجا اون لاين",
       "version": "1.0.0",
