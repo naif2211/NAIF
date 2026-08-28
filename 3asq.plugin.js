@@ -17,7 +17,9 @@ function abs(url) {
   return BASE + "/" + url;
 }
 
-function clean(text) { return text ? String(text).replace(/\s+/g, " ").trim() : ""; }
+function clean(text) {
+  return text ? String(text).replace(/\s+/g, " ").trim() : "";
+}
 
 function firstText(el, selectors) {
   for (const sel of selectors) {
@@ -41,23 +43,39 @@ function firstAttr(el, selectors, attrs) {
 }
 
 function mangaIdFromHref(href) {
-  const m = String(href || "").match(/\/manga\/([^/?#]+)\/?(?:[?#].*)?$/i);
+  if (!href) return null;
+  const m = String(href).match(/\/manga\/([^/?#]+)\/?(?:[?#].*)?$/i);
   return m ? m[1] : null;
 }
 
 function cardToSummary(el) {
   const link = el.querySelector("a") || el.querySelector("a.item-thumb") || el.querySelector("a.manga-title");
   if (!link) return null;
-  const id = mangaIdFromHref(link.attr("href") || "");
+  const href = link.attr("href") || "";
+  const id = mangaIdFromHref(href);
   if (!id) return null;
+
   const img = el.querySelector("img");
-  const title = clean(link.attr("title") || firstText(el, [".post-title", ".item-summary h3", ".item-summary .post-title", "h3", "h4"]) || link.text());
+  const title = clean(
+    link.attr("title") ||
+    firstText(el, [".post-title", ".item-summary h3", ".item-summary .post-title", ".summary_content h3", "h3", "h4"]) ||
+    link.text()
+  );
   if (!title) return null;
+
   return { id, title, cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src")) };
 }
 
 function findCards(doc) {
-  for (const sel of [".page-item-detail.manga", ".c-tabs-item__content .row.c-tabs-item__content", ".row.c-tabs-item__content", ".tab-thumb.c-tabs-item__content", ".manga-item", ".item-summary"]) {
+  const selectors = [
+    ".page-item-detail.manga",
+    ".c-tabs-item__content .row.c-tabs-item__content",
+    ".row.c-tabs-item__content",
+    ".tab-thumb.c-tabs-item__content",
+    ".manga-item",
+    ".item-summary"
+  ];
+  for (const sel of selectors) {
     const items = doc.querySelectorAll(sel);
     if (items.length) return items;
   }
@@ -74,12 +92,13 @@ function chapterFromLink(a) {
   const href = a.attr("href") || "";
   if (!href) return null;
   const title = clean(a.text());
+  const number = a.attr("data-number") || chapterNumber(title, href);
   return {
     id: href.replace(/^https?:\/\/[^/]+\//i, "").replace(/^\//, ""),
-    chapter: a.attr("data-number") || chapterNumber(title, href),
+    chapter: number,
     title: title || undefined,
     pages: 1,
-    language: "ar"
+    language: "en"
   };
 }
 
@@ -91,22 +110,25 @@ const plugin = {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
     let path = "/manga/?status=&type=&order=desc&orderby=meta_value_num&page=" + page;
     if (tagId) path += "&genre=" + encodeURIComponent(tagId);
-    return findCards(await getDoc(path)).map(cardToSummary).filter(Boolean);
+    const doc = await getDoc(path);
+    return findCards(doc).map(cardToSummary).filter(Boolean);
   },
 
   async search(query, offset, tagId) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
     let path = "/manga/?s=" + encodeURIComponent(query) + "&post_type=wp-manga&page=" + page;
     if (tagId) path += "&genre=" + encodeURIComponent(tagId);
-    return findCards(await getDoc(path)).map(cardToSummary).filter(Boolean);
+    const doc = await getDoc(path);
+    return findCards(doc).map(cardToSummary).filter(Boolean);
   },
 
   async detail(id) {
     const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
     const root = doc.querySelector(".site-content") || doc;
+    const title = clean(root.querySelector("h1")?.text()) || id;
     return {
       id,
-      title: clean(root.querySelector("h1")?.text()) || id,
+      title,
       altTitle: firstText(root, [".alternative", ".post-content_item.manga_alternative .summary-content"]),
       cover: abs(firstAttr(root, [".summary_image", ".profile-manga", ".tab-summary .summary_image"], ["data-src", "data-lazy-src", "src"])),
       author: firstText(root, [".author-content", ".post-content_item.manga-authors .summary-content", ".post-content_item.manga-author .summary-content"]),
@@ -135,9 +157,10 @@ const plugin = {
     const res = await harbor.http(BASE + path, { responseType: "text", timeoutMs: 30000 });
     if (!res.ok) throw new Error("http " + res.status + " for " + path);
     const doc = await harbor.parseHtml(res.body);
+    const selectors = [".reading-content img", ".reading-content .page-break img", ".page-break img", ".wp-manga-chapter-img img", ".entry-content img"];
     const urls = [];
     const seen = new Set();
-    for (const sel of [".reading-content img", ".reading-content .page-break img", ".page-break img", ".wp-manga-chapter-img img", ".entry-content img"]) {
+    for (const sel of selectors) {
       for (const img of doc.querySelectorAll(sel)) {
         const u = abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src"));
         if (!u || seen.has(u)) continue;
@@ -151,10 +174,12 @@ const plugin = {
 
   async tags() {
     const doc = await getDoc("/manga/");
-    const out = [], seen = new Set();
+    const out = [];
+    const seen = new Set();
     for (const a of doc.querySelectorAll(".genres-content a, .genres a, .manga-genres a")) {
       const name = clean(a.text());
-      const m = String(a.attr("href") || "").match(/\/genre\/([^/?#]+)/i);
+      const href = a.attr("href") || "";
+      const m = href.match(/\/genre\/([^/?#]+)/i);
       if (!name || !m || seen.has(m[1])) continue;
       seen.add(m[1]);
       out.push({ id: m[1], name, group: "Genre" });
