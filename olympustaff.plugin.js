@@ -20,10 +20,7 @@ async function getDoc(path) {
   const res = await harbor.http(BASE + path, {
     responseType: "text",
     timeoutMs: 30000,
-    headers: {
-      Referer: BASE + "/",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
+    headers: { Referer: BASE + "/" }
   });
   if (!res.ok) throw new Error("http " + res.status + " for " + path);
   return harbor.parseHtml(res.body || "");
@@ -63,13 +60,9 @@ function cardToSummary(el) {
   const id = mangaIdFromHref(link.attr("href") || "");
   if (!id) return null;
   const title = clean(link.attr("title") || firstText(el, ["h1", "h2", "h3", "h4"]) || link.text());
-  if (!title) return null;
+  if (!title || /^(الفصل|فصل|chapter|chap)\s*[0-9]/i.test(title)) return null;
   const img = el.querySelector("img");
-  return {
-    id,
-    title,
-    cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src"))
-  };
+  return { id, title, cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src")) };
 }
 
 function findCards(doc) {
@@ -89,26 +82,26 @@ function findCards(doc) {
 }
 
 function chapterNumber(text, href) {
-  const label = clean(text);
-  let m = label.match(/(?:الفصل|فصل|chapter|chap)\s*(?:رقم)?\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  if (m) return m[1];
-  m = String(href || "").match(/\/series\/[^/?#]+\/([0-9]+(?:\.[0-9]+)?)\/?(?:\?|#|$)/i);
-  return m ? m[1] : null;
+  const h = String(href || "");
+  const m = h.match(/\/series\/[^/?#]+\/([0-9]+(?:\.[0-9]+)?)\/?(?:\?|#|$)/i);
+  if (m) return String(Number(m[1]));
+  const t = clean(text);
+  const x = t.match(/(?:الفصل|فصل|chapter|chap)\s*(?:رقم)?\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  return x ? String(Number(x[1])) : null;
 }
 
 function chapterFromLink(a) {
   const href = abs(a.attr("href") || "");
   if (!href || !/\/series\/[^/?#]+\/[0-9]+(?:\.[0-9]+)?\/?(?:\?|#|$)/i.test(href)) return null;
-  const title = clean(a.text());
-  const number = chapterNumber(title, href);
-  if (!number) return null;
-  return { id: href, chapter: number, title: title || "الفصل " + number, volume: null, pages: 0, language: "ar" };
+  const number = chapterNumber(a.text(), href);
+  if (number === null) return null;
+  return { id: href, chapter: number, title: clean(a.text()) || "الفصل " + number, volume: null, pages: 0, language: "ar" };
 }
 
 function chaptersFromDoc(doc) {
   const out = [];
   const seen = new Set();
-  for (const a of doc.querySelectorAll("a[href]")) {
+  for (const a of doc.querySelectorAll("a[href^='/series/']")) {
     const c = chapterFromLink(a);
     if (!c || seen.has(c.id)) continue;
     seen.add(c.id);
@@ -122,6 +115,7 @@ function addPage(url, urls, seen) {
   if (!url) return;
   url = abs(url);
   if (!url || seen.has(url)) return;
+  if (!/\.(?:jpe?g|png|webp|gif)(?:\?|#|$)/i.test(url)) return;
   if (/logo|avatar|favicon|icon|banner|sprite/i.test(url)) return;
   seen.add(url);
   urls.push(url);
@@ -129,33 +123,18 @@ function addPage(url, urls, seen) {
 
 function pageUrlsFromDoc(doc) {
   const urls = [];
-
-  // On OlympusStaff each page is exposed as an image link. Read the link itself
-  // first, because the visible <img> can contain a thumbnail while <a href>
-  // contains the full-resolution page.
   const seen = new Set();
   for (const a of doc.querySelectorAll("a[href]")) {
     const href = a.attr("href") || "";
-    if (!/\.(?:jpe?g|png|webp|gif)(?:\?|#|$)/i.test(href)) continue;
     if (!/(?:\/uploads\/|\/wp-content\/uploads\/)/i.test(href)) continue;
     addPage(href, urls, seen);
   }
-
-  // Read every image, not just the first matching selector.
   for (const img of doc.querySelectorAll("img")) {
     addPage(img.attr("data-src"), urls, seen);
     addPage(img.attr("data-lazy-src"), urls, seen);
     addPage(img.attr("data-original"), urls, seen);
     addPage(img.attr("src"), urls, seen);
   }
-
-  // Some versions expose page URLs in data attributes on containers.
-  for (const el of doc.querySelectorAll("[data-src], [data-image], [data-url]")) {
-    addPage(el.attr("data-src"), urls, seen);
-    addPage(el.attr("data-image"), urls, seen);
-    addPage(el.attr("data-url"), urls, seen);
-  }
-
   return urls;
 }
 
@@ -170,11 +149,11 @@ const plugin = {
 
   async search(query, offset) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    for (const path of [
+    const paths = [
       "/series?search=" + encodeURIComponent(query) + "&page=" + page,
-      "/series?searchTerm=" + encodeURIComponent(query) + "&page=" + page,
-      "/series/?search=" + encodeURIComponent(query) + "&page=" + page
-    ]) {
+      "/series?searchTerm=" + encodeURIComponent(query) + "&page=" + page
+    ];
+    for (const path of paths) {
       try {
         const list = findCards(await getDoc(path));
         if (list.length) return list;
@@ -188,12 +167,12 @@ const plugin = {
     const root = doc.querySelector("main") || doc.querySelector(".container") || doc;
     return {
       id,
-      title: clean(root.querySelector("h1")?.text()) || clean(root.querySelector("h2")?.text()) || id,
+      title: clean(root.querySelector("h1")?.text()) || id,
       cover: firstAttr(root, ["img"], ["data-src", "data-lazy-src", "data-original", "src"]),
       author: firstText(root, [".author", ".artist", ".writer"]),
       status: firstText(root, [".status"]),
       description: firstText(root, [".description", ".summary", ".entry-content", ".manga-description"]),
-      lastChapter: firstText(root, ["a[href*='/series/'][href*='/1']", "a[href*='/series/']"])
+      lastChapter: undefined
     };
   },
 
