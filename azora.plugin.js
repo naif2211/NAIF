@@ -1,4 +1,4 @@
-// Harbor source for Azora Manga (azorafly.com)
+// Harbor source for Azora Manga
 const BASE = "https://azorafly.com";
 const PAGE_SIZE = 48;
 
@@ -16,211 +16,232 @@ function abs(url) {
   return BASE + "/" + url;
 }
 
-async function getDoc(path) {
-  const res = await harbor.http(BASE + path, {
+async function getDoc(path, options) {
+  const res = await harbor.http(BASE + path, Object.assign({
     responseType: "text",
     timeoutMs: 30000,
     headers: {
-      "Referer": BASE + "/",
+      Referer: BASE + "/",
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
-  });
+  }, options || {}));
   if (!res.ok) throw new Error("http " + res.status + " for " + path);
   return harbor.parseHtml(res.body || "");
 }
 
-function attr(el, names) {
-  if (!el) return undefined;
-  for (const name of names) {
-    const value = el.attr(name);
-    if (value) return value;
+function firstText(el, selectors) {
+  for (const sel of selectors) {
+    const x = el?.querySelector(sel);
+    const t = clean(x?.text());
+    if (t) return t;
   }
   return undefined;
 }
 
-function mangaId(href) {
+function firstAttr(el, selectors, attrs) {
+  for (const sel of selectors) {
+    const x = el?.querySelector(sel);
+    if (!x) continue;
+    for (const attr of attrs) {
+      const v = x.attr(attr);
+      if (v) return v;
+    }
+  }
+  return undefined;
+}
+
+function mangaIdFromHref(href) {
   if (!href) return null;
-  const cleanHref = String(href).replace(/^https?:\/\/[^/]+/i, "");
-  const m = cleanHref.match(/^\/series\/([^/?#]+)\/?(?:[?#].*)?$/i);
+  const m = String(href).match(/\/series\/([^/?#]+)\/?(?:[?#].*)?$/i);
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-function findItems(doc) {
+function cardToSummary(el) {
+  const link = el.querySelector("a[href^='/series/']") || el.querySelector("a");
+  if (!link) return null;
+  const href = link.attr("href") || "";
+  const id = mangaIdFromHref(href);
+  if (!id) return null;
+
+  const img = el.querySelector("img");
+  const title = clean(
+    link.attr("title") ||
+    firstText(el, ["h3", "h2", ".title", ".name"]) ||
+    link.text()
+  );
+  if (!title) return null;
+
+  return {
+    id,
+    title,
+    cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src"))
+  };
+}
+
+function findCards(doc) {
   const selectors = [
     "div[class*='card']",
     "article",
     "div.relative.overflow-hidden"
   ];
-  const result = [];
+  const out = [];
   const seen = new Set();
 
-  for (const selector of selectors) {
-    for (const el of doc.querySelectorAll(selector)) {
-      const link = el.querySelector("a[href^='/series/']");
-      if (!link) continue;
-      const id = mangaId(link.attr("href"));
-      if (!id || seen.has(id)) continue;
-
-      const title = clean(
-        firstText(el, ["h3", "h2"]) ||
-        link.attr("title") ||
-        link.text()
-      );
-      if (!title) continue;
-
-      const image = el.querySelector("img");
-      const cover = abs(attr(image, ["src", "data-src", "data-lazy-src", "data-original"]));
-
-      seen.add(id);
-      result.push({ id, title, cover });
+  for (const sel of selectors) {
+    for (const el of doc.querySelectorAll(sel)) {
+      const item = cardToSummary(el);
+      if (item && !seen.has(item.id)) {
+        seen.add(item.id);
+        out.push(item);
+      }
     }
-    if (result.length) return result;
+    if (out.length) break;
   }
-
-  return result;
+  return out;
 }
 
-function firstText(root, selectors) {
-  for (const selector of selectors) {
-    const el = root?.querySelector(selector);
-    const text = clean(el?.text());
-    if (text) return text;
-  }
-  return undefined;
-}
-
-function firstAttr(root, selectors, attrs) {
-  for (const selector of selectors) {
-    const el = root?.querySelector(selector);
-    const value = attr(el, attrs);
-    if (value) return value;
-  }
-  return undefined;
-}
-
-function chapterNumber(href, text) {
-  const url = String(href || "");
-  const label = clean(text);
-
-  let m = url.match(/\/chapter\/?([^/?#]+)\/?(?:[?#].*)?$/i);
-  if (m) {
-    const value = decodeURIComponent(m[1]);
-    const n = value.match(/[0-9]+(?:\.[0-9]+)?/);
-    if (n) return n[0];
-  }
-
-  m = label.match(/(?:الفصل|chapter|ch\.?|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
+function chapterNumber(text, href) {
+  const s = clean(text) || String(href || "");
+  let m = s.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (!m) m = String(href || "").match(/\/chapter\/?([0-9]+(?:\.[0-9]+)?)\/?(?:\?|#|$)/i);
+  if (!m) m = String(href || "").match(/\/([0-9]+(?:\.[0-9]+)?)\/?(?:\?|#|$)/);
   return m ? m[1] : null;
 }
 
 function chapterFromLink(a) {
   const href = abs(a.attr("href") || "");
-  if (!href || !/\/chapter(?:\/|\?|#|$)/i.test(href)) return null;
+  if (!href) return null;
+  const rawHref = a.attr("href") || "";
+  if (!/\/chapter(?:\/|\?|#|$)/i.test(rawHref) && !/\/series\/[^/]+\/[^/]+/i.test(rawHref)) return null;
 
-  const text = clean(a.text());
-  const number = chapterNumber(href, text);
+  const title = clean(a.text());
+  const number = a.attr("data-number") || chapterNumber(title, rawHref);
   if (!number) return null;
 
   return {
     id: href,
     chapter: number,
-    title: text || "Chapter " + number,
+    title: title || "Chapter " + number,
     volume: null,
     pages: 0,
     language: "ar"
   };
 }
 
-function findChapters(doc) {
-  const result = [];
+function chaptersFromDoc(doc) {
+  const out = [];
   const seen = new Set();
 
-  for (const a of doc.querySelectorAll("a[href*='/chapter']")) {
-    const chapter = chapterFromLink(a);
-    if (!chapter || seen.has(chapter.id)) continue;
-    seen.add(chapter.id);
-    result.push(chapter);
+  const selectors = [
+    "a[href*='/chapter']",
+    "a[href*='/series/'][href$='/1']",
+    "a[href*='/series/']"
+  ];
+
+  for (const sel of selectors) {
+    for (const a of doc.querySelectorAll(sel)) {
+      const c = chapterFromLink(a);
+      if (!c || seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push(c);
+    }
+    if (out.length) break;
   }
 
-  result.sort((a, b) => {
+  out.sort((a, b) => {
     const na = parseFloat(a.chapter);
     const nb = parseFloat(b.chapter);
     if (Number.isNaN(na) || Number.isNaN(nb)) return 0;
     return nb - na;
   });
-
-  return result;
-}
-
-function imageUrl(img) {
-  return abs(attr(img, [
-    "src",
-    "data-src",
-    "data-lazy-src",
-    "data-original"
-  ]));
+  return out;
 }
 
 const plugin = {
   id: "azora",
   name: "Azora Manga",
 
-  async popular(offset) {
+  async popular(offset, tagId) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    return findItems(await getDoc("/series?sort=popular&page=" + page));
+    let path = "/series?sort=popular&page=" + page;
+    if (tagId) path += "&genre=" + encodeURIComponent(tagId);
+    return findCards(await getDoc(path));
   },
 
-  async search(query, offset) {
+  async search(query, offset, tagId) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    return findItems(await getDoc("/series?searchTerm=" + encodeURIComponent(query) + "&page=" + page));
+    let path = "/series?searchTerm=" + encodeURIComponent(query) + "&page=" + page;
+    if (tagId) path += "&genre=" + encodeURIComponent(tagId);
+    return findCards(await getDoc(path));
   },
 
   async detail(id) {
     const doc = await getDoc("/series/" + encodeURIComponent(id));
     const root = doc.querySelector("main") || doc;
-
     return {
       id,
-      title: clean(root.querySelector("h1")?.text()) || id,
-      cover: firstAttr(root, ["img[src*='upload']", "img[src*='storage']", "img"], ["src", "data-src", "data-lazy-src", "data-original"]),
+      title: clean(root.querySelector("h1")?.text()) || clean(root.querySelector("h2")?.text()) || id,
+      cover: abs(firstAttr(root, ["img[src*='upload']", "img[src*='storage']", "img"], ["data-src", "data-lazy-src", "data-original", "src"])),
+      altTitle: firstText(root, [".alternative", ".other-name", "[class*='alternative']"]),
+      author: firstText(root, ["span:contains('المؤلف')", "div:contains('المؤلف')", "[class*='author']"]),
+      status: firstText(root, ["span:contains('مستمر')", "span:contains('مكتمل')", "[class*='status']"]),
       description: firstAttr(root, ["meta[property='og:description']", "meta[name='description']"], ["content"]) || firstText(root, [".description", "[class*='description']"]),
-      author: firstText(root, ["span", "div"]) && firstText(root, ["span:contains('المؤلف')", "div:contains('المؤلف')"]),
-      status: firstText(root, ["span:contains('مستمر')", "span:contains('مكتمل')"]),
-      lastChapter: firstText(root, ["a[href*='/chapter']"])
+      lastChapter: firstText(root, ["a[href*='/chapter']", "a[href*='/series/']"])
     };
   },
 
   async chapters(id) {
     const doc = await getDoc("/series/" + encodeURIComponent(id));
-    return findChapters(doc);
+    return chaptersFromDoc(doc);
   },
 
   async pageUrls(chapterId) {
     const path = "/" + String(chapterId).replace(/^https?:\/\/[^/]+/i, "").replace(/^\//, "");
-    const doc = await getDoc(path);
+    const res = await harbor.http(BASE + path, {
+      responseType: "text",
+      timeoutMs: 30000,
+      headers: {
+        Referer: BASE + "/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+      }
+    });
+    if (!res.ok) throw new Error("http " + res.status + " for " + path);
+    const doc = await harbor.parseHtml(res.body || "");
     const urls = [];
     const seen = new Set();
 
-    const selectors = [
+    for (const sel of [
       "img[src*='storage.azorafly.com']",
-      "img[src*='/upload/']",
       "img[data-src*='storage.azorafly.com']",
+      "img[src*='/upload/']",
       "img[data-src*='/upload/']",
       "main img",
       "article img"
-    ];
-
-    for (const selector of selectors) {
-      for (const img of doc.querySelectorAll(selector)) {
-        const url = imageUrl(img);
-        if (!url || seen.has(url)) continue;
-        seen.add(url);
-        urls.push(url);
+    ]) {
+      for (const img of doc.querySelectorAll(sel)) {
+        const u = abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src"));
+        if (!u || seen.has(u)) continue;
+        seen.add(u);
+        urls.push(u);
       }
       if (urls.length) break;
     }
-
     return urls;
+  },
+
+  async tags() {
+    const doc = await getDoc("/series");
+    const out = [];
+    const seen = new Set();
+    for (const a of doc.querySelectorAll("a[href*='/genre/'], a[href*='/genres/']")) {
+      const name = clean(a.text());
+      const href = a.attr("href") || "";
+      const m = href.match(/\/(?:genre|genres)\/([^/?#]+)/i);
+      if (!name || !m || seen.has(m[1])) continue;
+      seen.add(m[1]);
+      out.push({ id: decodeURIComponent(m[1]), name, group: "Genre" });
+    }
+    return out;
   }
 };
 
