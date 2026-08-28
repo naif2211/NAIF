@@ -174,6 +174,7 @@ async function chapterList(id) {
   let list = chaptersFromDoc(doc);
   if (list.length) return list;
 
+  // Madara fallback: chapters may be loaded by AJAX.
   const pid = postId(doc);
   if (pid) {
     try {
