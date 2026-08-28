@@ -1,216 +1,123 @@
-// Harbor source for onma.me (rebuilt)
+// Harbor source for onma.me
 const BASE = "https://onma.me";
 const PAGE_SIZE = 48;
 const CATALOG_PAGES = 15;
 
-function clean(text) {
-  return text ? String(text).replace(/\s+/g, " ").trim() : "";
-}
+function clean(v) { return v ? String(v).replace(/\s+/g, " ").trim() : ""; }
 
 function abs(url) {
   if (!url) return undefined;
-  url = String(url).trim();
-  if (!url || url.startsWith("data:")) return undefined;
-  if (/^https?:\/\//i.test(url)) return url;
-  if (url.startsWith("//")) return "https:" + url;
-  if (url.startsWith("/")) return BASE + url;
-  return BASE + "/" + url;
+  const u = String(url).trim();
+  if (!u || u.startsWith("data:")) return undefined;
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return "https:" + u;
+  if (u.startsWith("/")) return BASE + u;
+  return BASE + "/" + u;
 }
 
 function imageUrl(img) {
   if (!img) return undefined;
-  return abs(
-    img.attr("data-src") ||
-    img.attr("data-lazy-src") ||
-    img.attr("data-original") ||
-    img.attr("data-url") ||
-    img.attr("data-image") ||
-    img.attr("src")
-  );
+  for (const a of ["data-src", "data-lazy-src", "data-original", "data-url", "data-image", "src"]) {
+    const v = img.attr(a);
+    if (v) return abs(v);
+  }
+  return undefined;
 }
 
 async function getDoc(path, options) {
-  const res = await harbor.http(BASE + path, Object.assign({
+  const p = String(path).replace(/^https?:\/\/[^/]+/i, "");
+  const res = await harbor.http(BASE + p, Object.assign({
     responseType: "text",
     timeoutMs: 30000,
-    headers: { Referer: BASE + "/" }
+    headers: { Referer: BASE + "/", "User-Agent": "Mozilla/5.0" }
   }, options || {}));
-  if (!res.ok) throw new Error("http " + res.status + " for " + path);
+  if (!res.ok) throw new Error("http " + res.status + " for " + p);
   return harbor.parseHtml(res.body || "");
 }
 
-function mangaIdFromHref(href) {
+function mangaId(href) {
   if (!href) return null;
-  const s = String(href).replace(/^https?:\/\/[^/]+/i, "");
-  const m = s.match(/^\/manga\/([^/?#]+)\/?$/i);
+  const p = String(href).replace(/^https?:\/\/[^/]+/i, "");
+  const m = p.match(/^\/manga\/([^/?#]+)\/?$/i);
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-function firstText(el, selectors) {
-  for (const s of selectors) {
-    const x = el?.querySelector(s);
-    const t = clean(x?.text());
-    if (t) return t;
-  }
-  return undefined;
-}
-
-function firstAttr(el, selectors, attrs) {
-  for (const s of selectors) {
-    const x = el?.querySelector(s);
-    if (!x) continue;
-    for (const a of attrs) {
-      const v = x.attr(a);
-      if (v) return v;
-    }
-  }
-  return undefined;
-}
-
-function nearestImage(el) {
-  let cur = el;
-  for (let i = 0; i < 6 && cur; i++) {
-    const img = cur.querySelector("img");
-    if (img) return imageUrl(img);
-    cur = cur.parentElement;
-  }
-  return undefined;
-}
-
-function cardToSummary(el) {
-  for (const a of el.querySelectorAll("a[href^='/manga/'],a[href*='/manga/']")) {
-    const id = mangaIdFromHref(a.attr("href") || "");
-    if (!id) continue;
-    const img = a.querySelector("img") || el.querySelector("img");
-    const title = clean(
-      a.attr("title") ||
-      a.attr("aria-label") ||
-      img?.attr("alt") ||
-      el.querySelector("h1,h2,h3,h4,.title,.name,.post-title")?.text() ||
-      a.text()
-    );
-    if (title) return { id, title, cover: imageUrl(img) || nearestImage(a) };
-  }
-  return null;
+function card(el) {
+  const a = el.querySelector("a[href^='/manga/'],a[href*='/manga/']");
+  if (!a) return null;
+  const id = mangaId(a.attr("href"));
+  if (!id) return null;
+  const img = a.querySelector("img") || el.querySelector("img");
+  const title = clean(a.attr("title") || a.attr("aria-label") || img?.attr("alt") || el.querySelector("h1,h2,h3,h4,.title,.name,.post-title")?.text() || a.text());
+  if (!title) return null;
+  return { id, title, cover: imageUrl(img) };
 }
 
 function findCards(doc) {
-  const out = [];
-  const seen = new Set();
-
-  for (const sel of [
-    ".manga-list .item",
-    ".manga-list li",
-    ".manga-list article",
-    ".row .item",
-    ".manga-item",
-    "article",
-    ".item"
-  ]) {
+  const out = [], seen = new Set();
+  for (const sel of [".manga-list .item", ".manga-list li", ".manga-list article", ".manga-item", "article", ".item"]) {
     for (const el of doc.querySelectorAll(sel)) {
-      const x = cardToSummary(el);
-      if (x && !seen.has(x.id)) {
-        seen.add(x.id);
-        out.push(x);
-      }
+      const x = card(el);
+      if (x && !seen.has(x.id)) { seen.add(x.id); out.push(x); }
     }
   }
-
-  for (const a of doc.querySelectorAll("a[href^='/manga/'],a[href*='/manga/']")) {
-    const id = mangaIdFromHref(a.attr("href") || "");
+  for (const a of doc.querySelectorAll("a[href^='/manga/']")) {
+    const id = mangaId(a.attr("href"));
     if (!id || seen.has(id)) continue;
     const img = a.querySelector("img") || a.parentElement?.querySelector("img") || a.parentElement?.parentElement?.querySelector("img");
     const title = clean(a.attr("title") || a.attr("aria-label") || img?.attr("alt") || a.text());
     if (!title) continue;
-    seen.add(id);
-    out.push({ id, title, cover: imageUrl(img) || nearestImage(a) });
+    seen.add(id); out.push({ id, title, cover: imageUrl(img) });
   }
   return out;
 }
 
-function normalizeQuery(s) {
-  return clean(s).toLocaleLowerCase()
-    .replace(/[إأآ]/g, "ا")
-    .replace(/[ًٌٍَُِّْـ]/g, "")
-    .replace(/\s+/g, " ");
+function norm(s) {
+  return clean(s).toLocaleLowerCase().replace(/[إأآ]/g, "ا").replace(/[ًٌٍَُِّْـ]/g, "");
 }
 
 function chapterNumber(text, href) {
-  const u = String(href || "").replace(/^https?:\/\/[^/]+/i, "");
-  let m = u.match(/^\/manga\/[^/]+\/([^/?#]+)(?:\/\d+)?\/?$/i);
-  if (m && /\d/.test(m[1])) return m[1];
-  const s = clean(text) || u;
-  m = s.match(/(?:chapter|ch\.?|الفصل|فصل|#)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  if (!m) m = s.match(/([0-9]+(?:\.[0-9]+)?)/);
-  return m ? m[1] : null;
+  const s = clean(text) + " " + String(href || "");
+  let m = s.match(/(?:chapter|ch\.?|الفصل|فصل|#)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (m) return m[1];
+  const p = String(href || "").replace(/^https?:\/\/[^/]+/i, "");
+  m = p.match(/^\/manga\/[^/]+\/([^/?#]+)/i);
+  return m && /^[0-9]+(?:\.[0-9]+)?$/.test(m[1]) ? m[1] : null;
 }
 
-// ONMA uses /manga/{slug}/{chapter} for the first page and
-// /manga/{slug}/{chapter}/{page} for subsequent pages. Keep the chapter
-// root as the Harbor chapter id so reading never starts at a random page.
-function normalizeChapterHref(href) {
-  const u = abs(href || "");
+// A chapter is the numeric URL /manga/{slug}/{chapter}.
+// Never store /2, /3, etc. as a separate chapter.
+function chapterRoot(href) {
+  const u = abs(href);
   if (!u) return null;
-  const path = u.replace(/^https?:\/\/[^/]+/i, "");
-  const m = path.match(/^(\/manga\/[^/]+\/[^/?#]+)(?:\/\d+)?\/?(?:[?#].*)?$/i);
-  return m ? BASE + m[1] : u;
+  const p = u.replace(/^https?:\/\/[^/]+/i, "");
+  const m = p.match(/^(\/manga\/[^/]+\/[^/?#]+)(?:\/\d+)?\/?(?:[?#].*)?$/i);
+  return m ? BASE + m[1] : null;
 }
 
-function chapterFromLink(a) {
+function chapterFromAnchor(a) {
   const raw = a.attr("href") || "";
-  const id = normalizeChapterHref(raw);
-  if (!id) return null;
+  const id = chapterRoot(raw);
   const n = a.attr("data-number") || chapterNumber(a.text(), raw);
-  if (!n) return null;
-  return {
-    id,
-    chapter: n,
-    title: clean(a.text()) || "Chapter " + n,
-    volume: null,
-    pages: 0,
-    language: "ar"
-  };
+  if (!id || !n) return null;
+  return { id, chapter: n, title: clean(a.text()) || "Chapter " + n, volume: null, pages: 0, language: "ar" };
 }
 
 function chaptersFromDoc(doc) {
-  const out = [];
-  const seen = new Set();
-  for (const sel of [
-    "li.wp-manga-chapter a",
-    ".wp-manga-chapter a",
-    ".chapter-list a",
-    ".chapters a"
-  ]) {
+  const out = [], seen = new Set();
+  for (const sel of ["li.wp-manga-chapter a", ".wp-manga-chapter a", ".chapter-list a", ".chapters a", "a[href^='/manga/']"]) {
     for (const a of doc.querySelectorAll(sel)) {
-      const c = chapterFromLink(a);
+      const c = chapterFromAnchor(a);
       if (!c || seen.has(c.id)) continue;
-      seen.add(c.id);
-      out.push(c);
+      seen.add(c.id); out.push(c);
     }
     if (out.length) return out;
-  }
-
-  // Last fallback: only accept links that clearly contain a chapter segment.
-  for (const a of doc.querySelectorAll("a[href*='/manga/']")) {
-    const href = a.attr("href") || "";
-    if (!/\/manga\/[^/]+\/[^/?#]+/i.test(href)) continue;
-    const c = chapterFromLink(a);
-    if (!c || seen.has(c.id)) continue;
-    seen.add(c.id);
-    out.push(c);
   }
   return out;
 }
 
-function formEncode(obj) {
-  return Object.keys(obj)
-    .filter(k => obj[k] !== undefined && obj[k] !== null)
-    .map(k => encodeURIComponent(k) + "=" + encodeURIComponent(String(obj[k])))
-    .join("&");
-}
-
 function postId(doc) {
-  for (const h of doc.querySelectorAll("div[id^='manga-chapters-holder'],.manga-chapters-holder")) {
+  for (const h of doc.querySelectorAll("[id^='manga-chapters-holder'],.manga-chapters-holder")) {
     const id = h.attr("data-id");
     if (id) return id;
   }
@@ -218,8 +125,8 @@ function postId(doc) {
 }
 
 async function chapterList(id) {
-  const mangaPath = "/manga/" + encodeURIComponent(id) + "/";
-  let doc = await getDoc(mangaPath);
+  const path = "/manga/" + encodeURIComponent(id) + "/";
+  let doc = await getDoc(path);
   let list = chaptersFromDoc(doc);
   if (list.length) return list;
 
@@ -227,15 +134,9 @@ async function chapterList(id) {
   if (pid) {
     try {
       const r = await harbor.http(BASE + "/wp-admin/admin-ajax.php", {
-        method: "POST",
-        responseType: "text",
-        timeoutMs: 30000,
-        headers: {
-          "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-          "x-requested-with": "XMLHttpRequest",
-          Referer: BASE + mangaPath
-        },
-        body: formEncode({ action: "manga_get_chapters", manga: pid })
+        method: "POST", responseType: "text", timeoutMs: 30000,
+        headers: { "content-type": "application/x-www-form-urlencoded; charset=UTF-8", "x-requested-with": "XMLHttpRequest", Referer: BASE + path },
+        body: "action=manga_get_chapters&manga=" + encodeURIComponent(pid)
       });
       if (r.ok) {
         list = chaptersFromDoc(await harbor.parseHtml(r.body || ""));
@@ -243,109 +144,53 @@ async function chapterList(id) {
       }
     } catch (_) {}
   }
-
-  try {
-    const r = await harbor.http(BASE + mangaPath.replace(/\/$/, "") + "/ajax/chapters/", {
-      method: "POST",
-      responseType: "text",
-      timeoutMs: 30000,
-      headers: {
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "x-requested-with": "XMLHttpRequest",
-        Referer: BASE + mangaPath
-      },
-      body: ""
-    });
-    if (r.ok) {
-      list = chaptersFromDoc(await harbor.parseHtml(r.body || ""));
-      if (list.length) return list;
-    }
-  } catch (_) {}
-
   return [];
 }
 
-async function catalogPage(page) {
-  return findCards(await getDoc("/manga-list?page=" + page));
-}
+async function catalog(page) { return findCards(await getDoc("/manga-list?page=" + page)); }
 
-// ONMA's catalogue is paginated at /manga-list. Search is implemented as a
-// real catalogue-wide lookup: it searches the site's complete manga index,
-// not the currently visible home page. This also works when ONMA changes its
-// advanced-search form fields.
-async function searchCatalogue(query) {
-  const wanted = normalizeQuery(query);
-  const all = [];
-  const seen = new Set();
-
+async function searchAll(query) {
+  const q = norm(query), result = [], seen = new Set();
   for (let page = 1; page <= CATALOG_PAGES; page++) {
     let items = [];
-    try { items = await catalogPage(page); } catch (_) { continue; }
-    for (const item of items) {
-      const title = normalizeQuery(item.title);
-      if (!title || !title.includes(wanted) || seen.has(item.id)) continue;
-      seen.add(item.id);
-      all.push(item);
+    try { items = await catalog(page); } catch (_) { continue; }
+    for (const x of items) {
+      if (!seen.has(x.id) && norm(x.title).includes(q)) { seen.add(x.id); result.push(x); }
     }
   }
-  return all;
+  return result;
 }
 
-function pageLinksForChapter(doc, chapterId) {
-  const root = String(chapterId).replace(/^https?:\/\/[^/]+/i, "").replace(/\/$/, "");
-  const out = [];
-  const seen = new Set();
-
-  for (const a of doc.querySelectorAll("a[href*='/manga/']")) {
-    const href = abs(a.attr("href") || "");
-    if (!href) continue;
-    const path = href.replace(/^https?:\/\/[^/]+/i, "").replace(/\/$/, "");
-    if (path === root || path.startsWith(root + "/")) {
-      const m = path.match(new RegExp("^" + root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:/(\\d+))?$"));
-      if (!m) continue;
-      if (!seen.has(href)) {
-        seen.add(href);
-        out.push(href);
-      }
-    }
-  }
-
-  // Always include the chapter root first. ONMA's root is page 1.
-  const base = BASE + root;
-  if (!seen.has(base)) out.unshift(base);
-  else out.sort((a, b) => {
-    const na = Number((a.match(/\/(\d+)$/) || [0, 1])[1]);
-    const nb = Number((b.match(/\/(\d+)$/) || [0, 1])[1]);
-    return na - nb;
-  });
-  return out;
-}
-
-async function imagesFromPage(path) {
-  const cleanPath = String(path).replace(/^https?:\/\/[^/]+/i, "");
-  const doc = await getDoc(cleanPath);
-  const urls = [];
-  const seen = new Set();
-  for (const sel of [
-    ".reading-content .page-break img",
-    ".reading-content img",
-    ".chapter-content img",
-    ".reader-content img",
-    ".page-content img",
-    ".page-break img",
-    ".wp-manga-chapter-img img",
-    ".entry-content img"
-  ]) {
+function imageCandidates(doc) {
+  const result = [], seen = new Set();
+  for (const sel of [".reading-content img", ".chapter-content img", ".reader-content img", ".page-content img", ".page-break img", ".wp-manga-chapter-img img", ".entry-content img", "img[data-src]", "img[data-lazy-src]"]) {
     for (const img of doc.querySelectorAll(sel)) {
       const u = imageUrl(img);
-      if (u && !seen.has(u)) {
-        seen.add(u);
-        urls.push(u);
-      }
+      if (!u || seen.has(u) || /logo|avatar|favicon|icon/i.test(u)) continue;
+      seen.add(u); result.push(u);
     }
-    if (urls.length) break;
+    if (result.length) break;
   }
-  return urls;
+  return result;
+}
+
+function pageLinks(doc, root) {
+  const base = root.replace(/^https?:\/\/[^/]+/i, "").replace(/\/$/, "");
+  const out = [], seen = new Set();
+  for (const a of doc.querySelectorAll("a[href]")) {
+    const href = abs(a.attr("href"));
+    if (!href) continue;
+    const p = href.replace(/^https?:\/\/[^/]+/i, "").replace(/\/$/, "");
+    if (p === base || (p.startsWith(base + "/") && /^\d+$/.test(p.slice(base.length + 1)))) {
+      if (!seen.has(href)) { seen.add(href); out.push(href); }
+    }
+  }
+  out.sort((a, b) => {
+    const ma = a.match(/\/(\d+)\/?$/), mb = b.match(/\/(\d+)\/?$/);
+    return Number(ma ? ma[1] : 1) - Number(mb ? mb[1] : 1);
+  });
+  if (!out.length) out.push(root);
+  return out;
 }
 
 const plugin = {
@@ -354,14 +199,13 @@ const plugin = {
 
   async popular(offset) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    return catalogPage(Math.min(page, CATALOG_PAGES));
+    return catalog(Math.min(page, CATALOG_PAGES));
   },
 
   async search(query, offset) {
-    const wanted = normalizeQuery(query);
-    if (!wanted) return this.popular(offset);
-
-    const all = await searchCatalogue(query);
+    const q = norm(query);
+    if (!q) return this.popular(offset);
+    const all = await searchAll(query);
     const start = Math.floor(offset / PAGE_SIZE) * PAGE_SIZE;
     return all.slice(start, start + PAGE_SIZE);
   },
@@ -369,62 +213,55 @@ const plugin = {
   async detail(id) {
     const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
     const root = doc.querySelector(".site-content") || doc;
+    const h1 = root.querySelector("div.post-title h1") || root.querySelector("h1");
+    const img = root.querySelector(".summary_image img") || root.querySelector(".profile-manga img") || root.querySelector(".tab-summary img");
     return {
       id,
-      title: clean(root.querySelector("div.post-title h1")?.text()) || clean(root.querySelector("h1")?.text()) || id,
-      altTitle: firstText(root, [".alternative", ".other-name", ".post-content_item.manga_alternative .summary-content"]),
-      cover: abs(firstAttr(root, [".summary_image", ".profile-manga", ".tab-summary .summary_image", ".thumbnail", ".cover"], ["data-src", "data-lazy-src", "data-original", "data-url", "src"])),
-      author: firstText(root, [".author-content", ".author", ".post-content_item.manga-authors .summary-content", ".post-content_item.manga-author .summary-content"]),
-      status: firstText(root, [".post-content_item.manga-status .summary-content", ".post-content_item.manga_status .summary-content", ".status", ".manga-status"]),
-      description: firstText(root, [".summary__content", ".description-summary .summary__content", ".description-summary", ".description", ".summary_content"]),
-      lastChapter: firstText(root, [".wp-manga-chapter a", "li.wp-manga-chapter a", ".chapter-list a", ".chapters a"])
+      title: clean(h1?.text()) || id,
+      cover: imageUrl(img),
+      altTitle: clean(root.querySelector(".alternative")?.text()),
+      author: clean(root.querySelector(".author-content")?.text()),
+      status: clean(root.querySelector(".manga-status,.post-content_item.manga-status .summary-content")?.text()),
+      description: clean(root.querySelector(".description-summary,.summary__content,.description")?.text()),
+      lastChapter: clean(root.querySelector(".wp-manga-chapter a,.chapter-list a")?.text())
     };
   },
 
-  async chapters(id) {
-    return chapterList(id);
-  },
+  async chapters(id) { return chapterList(id); },
 
   async pageUrls(chapterId) {
-    const root = normalizeChapterHref(chapterId);
+    const root = chapterRoot(chapterId);
     if (!root) return [];
 
-    let firstDoc;
-    try {
-      firstDoc = await getDoc(root.replace(BASE, ""));
-    } catch (_) {
-      return [];
-    }
+    let doc;
+    try { doc = await getDoc(root); } catch (_) { return []; }
 
-    const pages = pageLinksForChapter(firstDoc, root);
-    const urls = [];
-    const seen = new Set();
+    const urls = [], seen = new Set();
+    const add = (d) => {
+      for (const u of imageCandidates(d)) {
+        if (!seen.has(u)) { seen.add(u); urls.push(u); }
+      }
+    };
 
-    for (const page of pages) {
-      try {
-        const imgs = await imagesFromPage(page);
-        for (const u of imgs) {
-          if (!seen.has(u)) {
-            seen.add(u);
-            urls.push(u);
-          }
-        }
-      } catch (_) {}
+    // Page 1 is the chapter root itself.
+    add(doc);
+
+    // If ONMA splits the chapter into /2, /3, ... fetch those pages too.
+    for (const page of pageLinks(doc, root)) {
+      if (page === root) continue;
+      try { add(await getDoc(page)); } catch (_) {}
     }
 
     return urls;
   },
 
   async tags() {
-    const doc = await getDoc("/manga-list"), out = [], seen = new Set();
-    for (const a of doc.querySelectorAll("a[href*='/category/'],.genres-content a,.genres a,.manga-genres a,a[href*='/genre/']")) {
-      const name = clean(a.text());
-      const href = a.attr("href") || "";
-      const m = href.match(/\/category\/([^/?#]+)/i) || href.match(/\/genre\/([^/?#]+)/i);
-      if (name && m && !seen.has(m[1])) {
-        seen.add(m[1]);
-        out.push({ id: decodeURIComponent(m[1]), name, group: "Genre" });
-      }
+    const doc = await getDoc("/manga-list");
+    const out = [], seen = new Set();
+    for (const a of doc.querySelectorAll("a[href*='/genre/']")) {
+      const href = a.attr("href") || "", m = href.match(/\/genre\/([^/?#]+)/i), name = clean(a.text());
+      if (!m || !name || seen.has(m[1])) continue;
+      seen.add(m[1]); out.push({ id: decodeURIComponent(m[1]), name, group: "Genre" });
     }
     return out;
   }
