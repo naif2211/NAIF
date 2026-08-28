@@ -25,7 +25,7 @@ async function getDoc(path) {
   const res = await harbor.http(BASE + path, {
     responseType: "text",
     timeoutMs: 30000,
-    headers: { Referer: BASE + "/", "User-Agent": "Mozilla/5.0" }
+    headers: { Referer: BASE + "/" }
   });
   if (!res.ok) throw new Error("http " + res.status + " for " + path);
   return harbor.parseHtml(res.body || "");
@@ -35,12 +35,6 @@ function mangaId(href) {
   const p = pathOf(href);
   const m = p.match(/^\/manga\/([^/?#]+)\/?$/i);
   return m ? decodeURIComponent(m[1]) : null;
-}
-
-function chapterFromHref(href) {
-  const p = pathOf(href);
-  const m = p.match(/^\/manga\/([^/?#]+)\/([^/?#]+)\/?$/i);
-  return m ? { manga: decodeURIComponent(m[1]), chapter: decodeURIComponent(m[2]) } : null;
 }
 
 function cardToSummary(el) {
@@ -61,14 +55,7 @@ function cardToSummary(el) {
 function listFromDoc(doc) {
   const out = [];
   const seen = new Set();
-  const containers = [
-    ".page-item-detail",
-    ".row.c-tabs-item__content",
-    ".c-tabs-item__content",
-    ".item-summary",
-    ".manga-item",
-    "article"
-  ];
+  const containers = [".page-item-detail", ".row.c-tabs-item__content", ".c-tabs-item__content", ".manga-item", "article"];
   for (const sel of containers) {
     for (const el of doc.querySelectorAll(sel)) {
       const item = cardToSummary(el);
@@ -83,18 +70,17 @@ function listFromDoc(doc) {
     const id = mangaId(a.attr("href") || "");
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    let title = clean(a.attr("title")) || clean(a.text());
+    const title = clean(a.attr("title")) || clean(a.text()) || id.replace(/[-_]+/g, " ");
     let parent = a.parentElement;
     let cover;
     for (let i = 0; i < 6 && parent; i++, parent = parent.parentElement) {
-      if (!title) title = clean(parent.querySelector("h3")?.text()) || clean(parent.querySelector("h4")?.text());
-      if (!cover) {
-        const img = parent.querySelector("img");
-        cover = abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src"));
+      const img = parent.querySelector("img");
+      if (img) {
+        cover = abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src"));
+        if (cover) break;
       }
-      if (title && cover) break;
     }
-    out.push({ id, title: title || id.replace(/[-_]+/g, " "), cover });
+    out.push({ id, title, cover });
   }
   return out;
 }
@@ -106,19 +92,26 @@ function chapterNumber(text, slug) {
   return m ? m[1] : String(slug || "");
 }
 
-function chaptersFromDoc(doc, mangaIdValue) {
+// Important: MangaLik can use a different slug for chapter URLs than for the
+// manga detail URL. Example: detail = /manga/one-piece/ while chapters can be
+// /manga/pieceone/1190/. So do NOT compare the first slug with the detail id.
+function chaptersFromDoc(doc) {
   const out = [];
   const seen = new Set();
-  const wanted = String(mangaIdValue || "").toLowerCase();
   for (const a of doc.querySelectorAll("a")) {
     const href = a.attr("href") || "";
-    const c = chapterFromHref(href);
-    if (!c || c.manga.toLowerCase() !== wanted) continue;
+    const p = pathOf(href);
+    const m = p.match(/^\/manga\/([^/?#]+)\/([^/?#]+)\/?$/i);
+    if (!m) continue;
+
     const full = abs(href);
     if (!full || seen.has(full)) continue;
-    seen.add(full);
+
     const text = clean(a.text()) || clean(a.attr("title"));
-    const number = a.attr("data-number") || chapterNumber(text, c.chapter);
+    const number = a.attr("data-number") || chapterNumber(text, m[2]);
+    if (!number) continue;
+
+    seen.add(full);
     out.push({
       id: full,
       chapter: number,
@@ -136,7 +129,7 @@ function chaptersFromDoc(doc, mangaIdValue) {
   return out;
 }
 
-async function tryPages(paths) {
+async function tryPaths(paths) {
   for (const path of paths) {
     try {
       const items = listFromDoc(await getDoc(path));
@@ -144,27 +137,6 @@ async function tryPages(paths) {
     } catch (_) {}
   }
   return [];
-}
-
-async function ajaxSearch(query) {
-  const body = "action=wp-manga-search-manga&title=" + encodeURIComponent(query);
-  try {
-    const res = await harbor.http(BASE + "/wp-admin/admin-ajax.php", {
-      method: "POST",
-      responseType: "text",
-      timeoutMs: 30000,
-      headers: {
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "x-requested-with": "XMLHttpRequest",
-        Referer: BASE + "/"
-      },
-      body
-    });
-    if (!res.ok) return [];
-    return listFromDoc(await harbor.parseHtml(res.body || ""));
-  } catch (_) {
-    return [];
-  }
 }
 
 const plugin = {
@@ -176,7 +148,7 @@ const plugin = {
     const paths = page === 1
       ? ["/", "/home/", "/latest/", "/manga/"]
       : ["/latest/page/" + page + "/", "/page/" + page + "/", "/home/page/" + page + "/"];
-    return tryPages(paths);
+    return tryPaths(paths);
   },
 
   async search(query, offset) {
@@ -184,26 +156,20 @@ const plugin = {
     if (!q) return [];
     const page = Math.floor(offset / PAGE_SIZE) + 1;
     const e = encodeURIComponent(q);
-
-    // First use MangaLik's Madara AJAX autocomplete/search endpoint.
-    const ajax = await ajaxSearch(q);
-    if (ajax.length) return ajax;
-
-    // Fallbacks for the normal WordPress search pages.
     const paths = page === 1
       ? [
-          "/?post_type=wp-manga&s=" + e,
-          "/?s=" + e + "&post_type=wp-manga",
           "/manga/?s=" + e,
           "/manga/?post_type=wp-manga&s=" + e,
-          "/?s=" + e
+          "/?s=" + e + "&post_type=wp-manga",
+          "/?post_type=wp-manga&s=" + e,
+          "/search/" + e + "/"
         ]
       : [
-          "/page/" + page + "/?post_type=wp-manga&s=" + e,
           "/manga/page/" + page + "/?s=" + e,
-          "/manga/page/" + page + "/?post_type=wp-manga&s=" + e
+          "/manga/page/" + page + "/?post_type=wp-manga&s=" + e,
+          "/page/" + page + "/?s=" + e + "&post_type=wp-manga"
         ];
-    return tryPages(paths);
+    return tryPaths(paths);
   },
 
   async detail(id) {
@@ -218,29 +184,22 @@ const plugin = {
       cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src")),
       description: clean(root.querySelector(".description-summary")?.text()) || clean(root.querySelector(".summary__content")?.text()),
       status: clean(root.querySelector(".post-content_item.manga-status .summary-content")?.text()),
-      author: clean(root.querySelector(".post-content_item.manga-authors .summary-content")?.text()) || clean(root.querySelector(".author-content")?.text()),
-      lastChapter: clean(root.querySelector("a[href^='/manga/']")?.text())
+      author: clean(root.querySelector(".post-content_item.manga-authors .summary-content")?.text()) || clean(root.querySelector(".author-content")?.text())
     };
   },
 
   async chapters(id) {
     const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
-    return chaptersFromDoc(doc, id);
+    return chaptersFromDoc(doc);
   },
 
   async pageUrls(chapterId) {
     const path = pathOf(chapterId);
     if (!path) return [];
-    const res = await harbor.http(BASE + path, {
-      responseType: "text",
-      timeoutMs: 30000,
-      headers: { Referer: BASE + "/", "User-Agent": "Mozilla/5.0" }
-    });
-    if (!res.ok) throw new Error("http " + res.status + " for " + path);
-    const doc = await harbor.parseHtml(res.body || "");
+    const doc = await getDoc(path);
     const urls = [];
     const seen = new Set();
-    for (const sel of [".reading-content img", ".page-break img", ".wp-manga-chapter-img img", ".entry-content img"]) {
+    for (const sel of [".reading-content img", ".page-break img", ".wp-manga-chapter-img", ".entry-content img"]) {
       for (const img of doc.querySelectorAll(sel)) {
         const u = abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src"));
         if (!u || seen.has(u)) continue;
