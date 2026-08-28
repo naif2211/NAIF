@@ -28,17 +28,18 @@ async function getDoc(path, options) {
 
 function mangaIdFromHref(href) {
   if (!href) return null;
-  const m = String(href).match(/^\/manga\/([^/?#]+)\/?(?:[?#].*)?$/i);
+  const s = String(href).trim().replace(BASE, "");
+  const m = s.match(/^\/manga\/([^/?#]+)\/?$/i);
   return m ? m[1] : null;
 }
 
 function findCover(link) {
   let el = link;
-  for (let i = 0; i < 5 && el; i++, el = el.parentElement) {
+  for (let i = 0; i < 6 && el; i++, el = el.parentElement) {
     const img = el.querySelector("img");
-    if (img) {
-      return abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src"));
-    }
+    if (!img) continue;
+    const u = img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src");
+    if (u) return abs(u);
   }
   return undefined;
 }
@@ -47,7 +48,7 @@ function findTitle(link) {
   const title = clean(link.attr("title"));
   if (title) return title;
   let el = link;
-  for (let i = 0; i < 5 && el; i++, el = el.parentElement) {
+  for (let i = 0; i < 6 && el; i++, el = el.parentElement) {
     for (const sel of [".post-title", ".item-summary h3", ".summary_content h3", "h3", "h4", ".manga-title"]) {
       const x = el.querySelector(sel);
       const t = clean(x?.text());
@@ -57,35 +58,26 @@ function findTitle(link) {
   return clean(link.text());
 }
 
-function findCards(doc) {
+function findMangaLinks(doc) {
   const out = [];
   const seen = new Set();
-
-  // MangaLik uses normal /manga/slug/ links. Using the links directly
-  // is more reliable than depending on one particular card class.
-  for (const a of doc.querySelectorAll("a[href^='/manga/']")) {
+  // Do not use attribute selectors here: keep this compatible with Harbor's DOM parser.
+  for (const a of doc.querySelectorAll("a")) {
     const href = a.attr("href") || "";
     const id = mangaIdFromHref(href);
     if (!id || seen.has(id)) continue;
-
     const title = findTitle(a);
     if (!title) continue;
-
     seen.add(id);
-    out.push({
-      id,
-      title,
-      cover: findCover(a)
-    });
+    out.push({ id, title, cover: findCover(a) });
   }
-
   return out;
 }
 
 function chapterNumber(text, href) {
   const s = clean(text) || String(href || "");
   let m = s.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  if (!m) m = s.match(/\/([0-9]+(?:\.[0-9]+)?)\/?(?:\?|#|$)/);
+  if (!m) m = s.match(/\/([0-9]+(?:\.[0-9]+)?)(?:\/)?(?:\?|#|$)/);
   if (!m) m = s.match(/([0-9]+(?:\.[0-9]+)?)/);
   return m ? m[1] : null;
 }
@@ -93,22 +85,20 @@ function chapterNumber(text, href) {
 function chaptersFromDoc(doc) {
   const out = [];
   const seen = new Set();
-  for (const a of doc.querySelectorAll("a[href*='/manga/']")) {
+  for (const a of doc.querySelectorAll("a")) {
     const href = abs(a.attr("href") || "");
     if (!href || seen.has(href)) continue;
     const path = href.replace(BASE, "");
     const m = path.match(/^\/manga\/([^/]+)\/([^/?#]+)\/?$/i);
     if (!m) continue;
-
-    const title = clean(a.text());
+    const title = clean(a.text()) || clean(a.attr("title"));
     const number = a.attr("data-number") || chapterNumber(title, href);
     if (!number && !title) continue;
-
     seen.add(href);
     out.push({
       id: href,
       chapter: number,
-      title: title || (number ? "Chapter " + number : undefined),
+      title: title || "Chapter " + number,
       volume: null,
       pages: 0,
       language: "ar"
@@ -117,26 +107,24 @@ function chaptersFromDoc(doc) {
   return out;
 }
 
-async function chapterList(id) {
-  const path = "/manga/" + encodeURIComponent(id) + "/";
-  const doc = await getDoc(path);
-  return chaptersFromDoc(doc);
-}
-
 const plugin = {
   id: "mangalik",
   name: "مانجا ليك",
 
   async popular(offset) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const doc = await getDoc("/manga/?m_orderby=views&page=" + page);
-    return findCards(doc);
+    // MangaLik's homepage is the reliable listing page. /manga/ is not the same listing.
+    const path = page <= 1 ? "/" : "/page/" + page + "/";
+    return findMangaLinks(await getDoc(path));
   },
 
   async search(query, offset) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const path = "/manga/?s=" + encodeURIComponent(query) + "&post_type=wp-manga&page=" + page;
-    return findCards(await getDoc(path));
+    const q = encodeURIComponent(String(query || "").trim());
+    // WordPress/Madara search endpoint used by MangaLik.
+    let path = "/?s=" + q + "&post_type=wp-manga";
+    if (page > 1) path += "&page=" + page;
+    return findMangaLinks(await getDoc(path));
   },
 
   async detail(id) {
@@ -144,7 +132,6 @@ const plugin = {
     const root = doc.querySelector(".site-content") || doc;
     const titleEl = root.querySelector("div.post-title h1") || root.querySelector("h1");
     const coverEl = root.querySelector(".summary_image img") || root.querySelector(".profile-manga img") || root.querySelector("img");
-
     return {
       id,
       title: clean(titleEl?.text()) || id,
@@ -158,31 +145,23 @@ const plugin = {
   },
 
   async chapters(id) {
-    return chapterList(id);
+    const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
+    return chaptersFromDoc(doc);
   },
 
   async pageUrls(chapterId) {
     let path = String(chapterId).replace(/^https?:\/\/[^/]+/i, "");
     if (!path.startsWith("/")) path = "/" + path;
-
     const res = await harbor.http(BASE + path, {
       responseType: "text",
       timeoutMs: 30000,
       headers: { Referer: BASE + "/" }
     });
     if (!res.ok) throw new Error("http " + res.status + " for " + path);
-
     const doc = await harbor.parseHtml(res.body || "");
     const urls = [];
     const seen = new Set();
-
-    for (const sel of [
-      ".reading-content img",
-      ".reading-content .page-break img",
-      ".page-break img",
-      ".wp-manga-chapter-img img",
-      ".entry-content img"
-    ]) {
+    for (const sel of [".reading-content img", ".page-break img", ".wp-manga-chapter-img img", ".entry-content img"]) {
       for (const img of doc.querySelectorAll(sel)) {
         const u = abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src"));
         if (!u || seen.has(u)) continue;
@@ -198,10 +177,10 @@ const plugin = {
     const doc = await getDoc("/manga/");
     const out = [];
     const seen = new Set();
-    for (const a of doc.querySelectorAll("a[href*='/manga-genre/'], a[href*='/genre/']")) {
-      const name = clean(a.text());
+    for (const a of doc.querySelectorAll("a")) {
       const href = a.attr("href") || "";
       const m = href.match(/\/(?:manga-genre|genre)\/([^/?#]+)/i);
+      const name = clean(a.text());
       if (!name || !m || seen.has(m[1])) continue;
       seen.add(m[1]);
       out.push({ id: m[1], name, group: "Genre" });
