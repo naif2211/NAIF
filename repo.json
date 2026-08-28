@@ -1,14 +1,23 @@
 {
-  "name": "My Manga Repo",
+  "name": "NAIF Manga Repo",
   "plugins": [
     {
       "id": "3asq",
       "name": "العاشق",
-      "version": "1.0.1",
-      "lang": "en",
+      "version": "1.0.2",
+      "lang": "ar",
       "nsfw": false,
       "icon": "https://3asq.online/favicon.ico",
       "entry": "3asq.plugin.js"
+    },
+    {
+      "id": "olympustaff",
+      "name": "OlympusStaff",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://olympustaff.com/favicon.ico",
+      "entry": "olympustaff.plugin.js"
     }
   ]
 }
