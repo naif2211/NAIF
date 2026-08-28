@@ -1,7 +1,6 @@
 // Harbor source for onma.me
 const BASE = "https://onma.me";
 const PAGE_SIZE = 48;
-const CATALOG_PAGES = 15;
 
 function clean(v) { return v ? String(v).replace(/\s+/g, " ").trim() : ""; }
 
@@ -17,7 +16,7 @@ function abs(url) {
 
 function imageUrl(img) {
   if (!img) return undefined;
-  for (const a of ["data-src", "data-lazy-src", "data-original", "data-url", "data-image", "src"]) {
+  for (const a of ["data-src", "data-lazy-src", "data-original", "data-url", "data-image", "data-fallback-src", "src"]) {
     const v = img.attr(a);
     if (v) return abs(v);
   }
@@ -43,37 +42,46 @@ function mangaId(href) {
 }
 
 function card(el) {
-  const a = el.querySelector("a[href^='/manga/'],a[href*='/manga/']");
-  if (!a) return null;
-  const id = mangaId(a.attr("href"));
-  if (!id) return null;
-  const img = a.querySelector("img") || el.querySelector("img");
-  const title = clean(a.attr("title") || a.attr("aria-label") || img?.attr("alt") || el.querySelector("h1,h2,h3,h4,.title,.name,.post-title")?.text() || a.text());
-  if (!title) return null;
-  return { id, title, cover: imageUrl(img) };
+  for (const a of el.querySelectorAll("a[href^='/manga/'],a[href*='/manga/']")) {
+    const id = mangaId(a.attr("href") || "");
+    if (!id) continue;
+    const img = a.querySelector("img") || el.querySelector("img");
+    const title = clean(a.attr("title") || a.attr("aria-label") || img?.attr("alt") || el.querySelector("h1,h2,h3,h4,h5,.title,.name,.post-title")?.text() || a.text());
+    if (!title) continue;
+    return { id, title, cover: imageUrl(img) };
+  }
+  return null;
 }
 
 function findCards(doc) {
   const out = [], seen = new Set();
-  for (const sel of [".manga-list .item", ".manga-list li", ".manga-list article", ".manga-item", "article", ".item"]) {
+  for (const sel of [".manga-list .item", ".manga-list li", ".manga-list article", ".manga-item", ".page-item-detail", ".item", "article", "li"]) {
     for (const el of doc.querySelectorAll(sel)) {
       const x = card(el);
       if (x && !seen.has(x.id)) { seen.add(x.id); out.push(x); }
     }
   }
-  for (const a of doc.querySelectorAll("a[href^='/manga/']")) {
-    const id = mangaId(a.attr("href"));
+
+  // Important: ONMA has more than one card markup. Never restrict this
+  // fallback to relative URLs; absolute manga links are valid too.
+  for (const a of doc.querySelectorAll("a[href^='/manga/'],a[href*='://onma.me/manga/'],a[href*='/manga/']")) {
+    const id = mangaId(a.attr("href") || "");
     if (!id || seen.has(id)) continue;
-    const img = a.querySelector("img") || a.parentElement?.querySelector("img") || a.parentElement?.parentElement?.querySelector("img");
-    const title = clean(a.attr("title") || a.attr("aria-label") || img?.attr("alt") || a.text());
+    const parent = a.parentElement;
+    const img = a.querySelector("img") || parent?.querySelector("img") || parent?.parentElement?.querySelector("img");
+    const title = clean(a.attr("title") || a.attr("aria-label") || img?.attr("alt") || parent?.querySelector("h1,h2,h3,h4,h5,.title,.name")?.text() || a.text());
     if (!title) continue;
-    seen.add(id); out.push({ id, title, cover: imageUrl(img) });
+    seen.add(id);
+    out.push({ id, title, cover: imageUrl(img) });
   }
   return out;
 }
 
 function norm(s) {
-  return clean(s).toLocaleLowerCase().replace(/[إأآ]/g, "ا").replace(/[ًٌٍَُِّْـ]/g, "");
+  return clean(s).toLocaleLowerCase()
+    .replace(/[إأآ]/g, "ا")
+    .replace(/[ًٌٍَُِّْـ]/g, "")
+    .replace(/\s+/g, " ");
 }
 
 function chapterNumber(text, href) {
@@ -85,8 +93,6 @@ function chapterNumber(text, href) {
   return m && /^[0-9]+(?:\.[0-9]+)?$/.test(m[1]) ? m[1] : null;
 }
 
-// A chapter is the numeric URL /manga/{slug}/{chapter}.
-// Never store /2, /3, etc. as a separate chapter.
 function chapterRoot(href) {
   const u = abs(href);
   if (!u) return null;
@@ -105,7 +111,7 @@ function chapterFromAnchor(a) {
 
 function chaptersFromDoc(doc) {
   const out = [], seen = new Set();
-  for (const sel of ["li.wp-manga-chapter a", ".wp-manga-chapter a", ".chapter-list a", ".chapters a", "a[href^='/manga/']"]) {
+  for (const sel of ["li.wp-manga-chapter a", ".wp-manga-chapter a", ".chapter-list a", ".chapters a", "a[href*='/manga/']"]) {
     for (const a of doc.querySelectorAll(sel)) {
       const c = chapterFromAnchor(a);
       if (!c || seen.has(c.id)) continue;
@@ -129,7 +135,6 @@ async function chapterList(id) {
   let doc = await getDoc(path);
   let list = chaptersFromDoc(doc);
   if (list.length) return list;
-
   const pid = postId(doc);
   if (pid) {
     try {
@@ -147,15 +152,54 @@ async function chapterList(id) {
   return [];
 }
 
-async function catalog(page) { return findCards(await getDoc("/manga-list?page=" + page)); }
+async function catalog(page) {
+  return findCards(await getDoc("/manga-list?page=" + page));
+}
+
+// Try ONMA's own search endpoint first. Different deployments have used
+// different parameter names, so try the common ones and validate the result.
+async function directSearch(query, page) {
+  const q = encodeURIComponent(query);
+  const paths = [
+    "/manga-list?search=" + q + "&page=" + page,
+    "/manga-list?s=" + q + "&page=" + page,
+    "/manga-list?q=" + q + "&page=" + page,
+    "/manga-list?searchTerm=" + q + "&page=" + page
+  ];
+  for (const path of paths) {
+    try {
+      const items = findCards(await getDoc(path));
+      if (!items.length) continue;
+      const nq = norm(query);
+      const matches = items.filter(x => norm(x.title).includes(nq));
+      if (matches.length) return matches;
+    } catch (_) {}
+  }
+  return [];
+}
 
 async function searchAll(query) {
-  const q = norm(query), result = [], seen = new Set();
-  for (let page = 1; page <= CATALOG_PAGES; page++) {
+  const q = norm(query);
+  const result = [], seen = new Set();
+
+  // Fast path: real ONMA search.
+  const first = await directSearch(query, 1);
+  for (const x of first) { if (!seen.has(x.id)) { seen.add(x.id); result.push(x); } }
+  if (result.length) return result;
+
+  // Reliable fallback: scan the complete catalogue until the first empty page.
+  // There is deliberately no hard 15-page ceiling, because that was dropping
+  // newer/older works when ONMA's catalogue grew.
+  let empty = 0;
+  for (let page = 1; page <= 100; page++) {
     let items = [];
-    try { items = await catalog(page); } catch (_) { continue; }
+    try { items = await catalog(page); } catch (_) { items = []; }
+    if (!items.length) { empty++; if (empty >= 2) break; else continue; }
+    empty = 0;
     for (const x of items) {
-      if (!seen.has(x.id) && norm(x.title).includes(q)) { seen.add(x.id); result.push(x); }
+      if (!seen.has(x.id) && norm(x.title).includes(q)) {
+        seen.add(x.id); result.push(x);
+      }
     }
   }
   return result;
@@ -199,7 +243,7 @@ const plugin = {
 
   async popular(offset) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    return catalog(Math.min(page, CATALOG_PAGES));
+    return catalog(page);
   },
 
   async search(query, offset) {
@@ -232,26 +276,19 @@ const plugin = {
   async pageUrls(chapterId) {
     const root = chapterRoot(chapterId);
     if (!root) return [];
-
     let doc;
     try { doc = await getDoc(root); } catch (_) { return []; }
-
     const urls = [], seen = new Set();
     const add = (d) => {
       for (const u of imageCandidates(d)) {
         if (!seen.has(u)) { seen.add(u); urls.push(u); }
       }
     };
-
-    // Page 1 is the chapter root itself.
     add(doc);
-
-    // If ONMA splits the chapter into /2, /3, ... fetch those pages too.
     for (const page of pageLinks(doc, root)) {
       if (page === root) continue;
       try { add(await getDoc(page)); } catch (_) {}
     }
-
     return urls;
   },
 
