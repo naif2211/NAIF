@@ -1,0 +1,36 @@
+{
+  "name": "Azora Manga",
+  "iconUrl": "https://azorafly.com/favicon.ico",
+  "baseUrl": "https://azorafly.com",
+  "popularPath": "/series?sort=popular&page={offset}",
+  "searchPath": "/series?searchTerm={query}",
+  "pageStart": 1,
+  "itemsPerPage": 48,
+  "list": {
+    "item": "div[class*='card'], article, div.relative.overflow-hidden",
+    "title": "h3, h2, a[href^='/series/']",
+    "link": "a[href^='/series/']@href",
+    "cover": "img[src*='upload']@src|img[src*='storage']@src|img@src"
+  },
+  "detail": {
+    "title": "h1",
+    "cover": "img[src*='upload']@src|img[src*='storage']@src",
+    "description": "meta[property='og:description']@content|meta[name='description']@content",
+    "author": "span:contains('المؤلف')",
+    "status": "span:contains('مستمر'), span:contains('مكتمل')"
+  },
+  "chapters": {
+    "item": "a[href*='/chapter']",
+    "link": "@href",
+    "number": "@href",
+    "title": "span, div",
+    "date": "time@datetime"
+  },
+  "pages": {
+    "image": "img[src*='storage.azorafly.com']@src|img[src*='/upload/']@src"
+  },
+  "headers": {
+    "Referer": "https://azorafly.com/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+  }
+}
