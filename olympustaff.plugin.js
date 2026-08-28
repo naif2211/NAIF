@@ -1,5 +1,4 @@
 // Harbor source for OlympusStaff / Team-X
-// Site: https://olympustaff.com
 const BASE = "https://olympustaff.com";
 const PAGE_SIZE = 48;
 
@@ -38,52 +37,62 @@ function cards(d) {
   return out;
 }
 
-// IMPORTANT: OlympusStaff exposes the chapter number in the visible label itself.
-// Example from the site: "الفصل 15 الفصل رقم 15". We deliberately read the
-// explicit "الفصل رقم N" value instead of taking arbitrary numbers from the URL.
-function chapterNumber(label) {
+// OlympusStaff chapter links are /series/<manga>/<chapter>.
+// The visible label is used first, then the final numeric URL segment.
+function chapterNumber(label, href) {
   const s = clean(label);
   let m = s.match(/الفصل\s*رقم\s*([0-9]+(?:\.[0-9]+)?)/i);
   if (m) return m[1];
   m = s.match(/(?:الفصل|فصل|chapter|chap)\s*[-_.:#]*\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (m) return m[1];
+  m = String(href || "").match(/\/series\/[^/?#]+\/([0-9]+(?:\.[0-9]+)?)\/?(?:\?|#|$)/i);
   return m ? m[1] : null;
+}
+function isChapterUrl(href) {
+  return /\/series\/[^/?#]+\/[0-9]+(?:\.[0-9]+)?\/?(?:\?|#|$)/i.test(String(href || ""));
 }
 function getChapters(d) {
   const out = [], seen = new Set();
   for (const a of d.querySelectorAll('a[href]')) {
     const href = a.attr("href") || "";
     const label = txt(a);
-    if (!href || !label) continue;
-    // The series page contains two shortcut links plus the real chapter list.
-    // Only accept links whose text explicitly identifies them as chapters.
-    if (!/(الفصل|فصل|chapter|chap)/i.test(label)) continue;
-    const n = chapterNumber(label);
+    if (!href || !isChapterUrl(href)) continue;
+    const n = chapterNumber(label, href);
     if (n === null) continue;
     const url = abs(href);
     if (!url || seen.has(url)) continue;
-    // Reject the manga page itself and navigation links.
-    if (/\/series\/[^/]+\/?$/i.test(url)) continue;
     seen.add(url);
-    out.push({ id: url, chapter: n, title: label, volume: null, pages: 0, language: "ar" });
+    out.push({ id: url, chapter: n, title: label || ("الفصل " + n), volume: null, pages: 0, language: "ar" });
   }
-  // Numeric sort fixes lexicographic ordering (10 before 2).
   out.sort((a, b) => Number(b.chapter) - Number(a.chapter));
   return out;
 }
+
 function pageImages(d) {
   const out = [], seen = new Set();
+  // On OlympusStaff the reader page explicitly contains the chapter images.
+  // Prefer the image links/content area; do not stop after the first image.
   const selectors = [
-    ".reading-content img", ".reader img", ".chapter-content img",
-    ".entry-content img", "img[data-src]", "img[data-lazy-src]", "img[src]"
+    ".reading-content img",
+    ".reading-content a img",
+    ".reader-content img",
+    ".chapter-content img",
+    ".chapter-images img",
+    ".images-content img",
+    "img[alt*='episode']",
+    "img[data-src]",
+    "img[data-lazy-src]"
   ];
   for (const sel of selectors) {
-    for (const img of d.querySelectorAll(sel)) {
+    const nodes = d.querySelectorAll(sel);
+    for (const img of nodes) {
       const u = attr(img, ["data-src", "data-lazy-src", "data-original", "src"]);
       if (!u || seen.has(u)) continue;
       if (/logo|avatar|favicon|icon|banner|ads?\b/i.test(u)) continue;
-      seen.add(u); out.push(u);
+      seen.add(u);
+      out.push(u);
     }
-    if (out.length) break;
+    if (out.length > 1) break;
   }
   return out;
 }
@@ -144,7 +153,8 @@ return {
       const href = a.attr("href") || "", name = txt(a);
       const m = href.match(/\/(?:genre|type|category)\/([^/?#]+)/i);
       if (!m || !name || seen.has(m[1])) continue;
-      seen.add(m[1]); out.push({ id: decodeURIComponent(m[1]), name, group: "Genre" });
+      seen.add(m[1]);
+      out.push({ id: decodeURIComponent(m[1]), name, group: "Genre" });
     }
     return out;
   }
