@@ -1,7 +1,6 @@
 // Harbor source for onma.me (مانجا اون لاين)
 const BASE = "https://onma.me";
 const PAGE_SIZE = 48;
-const CHAPTER_SUFFIX = "";
 
 function clean(text) {
   return text ? String(text).replace(/\s+/g, " ").trim() : "";
@@ -50,7 +49,7 @@ function firstAttr(el, selectors, attrs) {
 
 function mangaIdFromHref(href) {
   if (!href) return null;
-  const m = String(href).match(/\/manga\/([^/?#]+)\/?(?:[?#].*)?$/i);
+  const m = String(href).match(/^https?:\/\/onma\.me\/manga\/([^/?#]+)\/?$/i) || String(href).match(/^\/manga\/([^/?#]+)\/?$/i);
   return m ? m[1] : null;
 }
 
@@ -62,41 +61,20 @@ function cardToSummary(el) {
   if (!id) return null;
 
   const img = el.querySelector("img");
-  const title = clean(
-    link.attr("title") ||
-    firstText(el, [".post-title h3", ".post-title h4", ".item-summary h3", ".summary_content h3", "h3", "h4"]) ||
-    img?.attr("alt") ||
-    link.text()
-  );
+  const title = clean(link.attr("title") || firstText(el, [".post-title h3", ".post-title h4", ".item-summary h3", ".summary_content h3", "h3", "h4"]) || img?.attr("alt") || link.text());
   if (!title) return null;
 
-  return {
-    id,
-    title,
-    cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src"))
-  };
+  return { id, title, cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src")) };
 }
 
 function findCards(doc) {
-  const selectors = [
-    "div.page-item-detail",
-    ".page-item-detail.manga",
-    ".manga__item",
-    ".c-tabs-item__content .row.c-tabs-item__content",
-    ".row.c-tabs-item__content",
-    ".tab-thumb.c-tabs-item__content",
-    ".manga-item",
-    ".item-summary"
-  ];
+  const selectors = ["div.page-item-detail", ".page-item-detail.manga", ".manga__item", ".c-tabs-item__content .row.c-tabs-item__content", ".row.c-tabs-item__content", ".tab-thumb.c-tabs-item__content", ".manga-item", ".item-summary"];
   const out = [];
   const seen = new Set();
   for (const sel of selectors) {
     for (const el of doc.querySelectorAll(sel)) {
       const item = cardToSummary(el);
-      if (item && !seen.has(item.id)) {
-        seen.add(item.id);
-        out.push(item);
-      }
+      if (item && !seen.has(item.id)) { seen.add(item.id); out.push(item); }
     }
     if (out.length) break;
   }
@@ -105,24 +83,28 @@ function findCards(doc) {
 
 function chapterNumber(text, href) {
   const s = clean(text) || String(href || "");
-  let m = s.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  if (!m) m = s.match(/\/manga\/[^/]+\/([0-9]+(?:\.[0-9]+)?)\/?(?:\?|#|$)/i);
+  let m = String(href || "").match(/\/manga\/[^/]+\/([^/?#]+)\/?(?:[?#].*)?$/i);
+  if (m) {
+    const n = decodeURIComponent(m[1]).match(/[0-9]+(?:\.[0-9]+)?/);
+    if (n) return n[0];
+  }
+  m = s.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
   if (!m) m = s.match(/([0-9]+(?:\.[0-9]+)?)/);
   return m ? m[1] : null;
 }
 
 function chapterFromLink(a) {
-  let href = abs(a.attr("href") || "");
-  if (!href || !/\/manga\/[^/]+\/[0-9]+(?:\.[0-9]+)?\/?(?:[?#].*)?$/i.test(href)) return null;
-  if (CHAPTER_SUFFIX && !href.includes(CHAPTER_SUFFIX)) href += CHAPTER_SUFFIX;
-
-  const title = clean(a.text());
-  const number = a.attr("data-number") || chapterNumber(title, href);
+  const raw = a.attr("href") || "";
+  const href = abs(raw);
+  if (!href) return null;
+  // ONMA chapter URLs are real manga URLs: /manga/<slug>/<chapter>.
+  if (!/^https?:\/\/onma\.me\/manga\/[^/?#]+\/[^/?#]+\/?(?:[?#].*)?$/i.test(href)) return null;
+  const number = a.attr("data-number") || chapterNumber(a.text(), href);
   if (!number) return null;
   return {
     id: href,
     chapter: number,
-    title: title || "Chapter " + number,
+    title: clean(a.text()) || "Chapter " + number,
     volume: null,
     pages: 0,
     language: "ar"
@@ -132,15 +114,7 @@ function chapterFromLink(a) {
 function chaptersFromDoc(doc) {
   const out = [];
   const seen = new Set();
-  const selectors = [
-    "li.wp-manga-chapter a",
-    ".version-chap li.wp-manga-chapter a",
-    ".main.version-chap li a",
-    "div.wp-manga-chapter a",
-    ".chapter-list a[href*='/manga/']",
-    ".chapters a[href*='/manga/']"
-  ];
-
+  const selectors = ["li.wp-manga-chapter a", ".version-chap li.wp-manga-chapter a", ".main.version-chap li a", "div.wp-manga-chapter a", ".chapter-list a[href*='/manga/']", ".chapters a[href*='/manga/']", "a[href^='/manga/']"];
   for (const sel of selectors) {
     for (const a of doc.querySelectorAll(sel)) {
       const c = chapterFromLink(a);
@@ -148,7 +122,7 @@ function chaptersFromDoc(doc) {
       seen.add(c.id);
       out.push(c);
     }
-    if (out.length) return out;
+    if (out.length) break;
   }
   return out;
 }
@@ -191,24 +165,19 @@ const plugin = {
   },
 
   async pageUrls(chapterId) {
-    const path = "/" + String(chapterId).replace(/^https?:\/\/[^/]+/i, "").replace(/^\//, "");
-    const res = await harbor.http(BASE + path, {
+    // Keep the exact chapter URL generated by chapters(); never rebuild it from the number.
+    const raw = String(chapterId || "");
+    const path = raw.replace(/^https?:\/\/onma\.me/i, "").replace(/^\//, "");
+    const res = await harbor.http(BASE + "/" + path, {
       responseType: "text",
       timeoutMs: 30000,
       headers: { Referer: BASE + "/" }
     });
-    if (!res.ok) throw new Error("http " + res.status + " for " + path);
+    if (!res.ok) throw new Error("http " + res.status + " for /" + path);
     const doc = await harbor.parseHtml(res.body || "");
     const urls = [];
     const seen = new Set();
-
-    for (const sel of [
-      ".reading-content .page-break img",
-      ".reading-content img",
-      ".page-break img",
-      ".wp-manga-chapter-img img",
-      ".entry-content img"
-    ]) {
+    for (const sel of [".reading-content .page-break img", ".reading-content img", ".page-break img", ".wp-manga-chapter-img img", ".entry-content img"]) {
       for (const img of doc.querySelectorAll(sel)) {
         const u = abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src"));
         if (!u || seen.has(u)) continue;
