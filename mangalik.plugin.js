@@ -34,28 +34,19 @@ function card(el) {
   return {
     id,
     title: text(a.attr("title")) || text(el.querySelector(".post-title")?.text()) || text(el.querySelector("h2")?.text()) || text(el.querySelector("h3")?.text()) || text(a.text()) || id,
-    cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src"))
+    cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src"))
   };
 }
 
 function cards(doc) {
   const result = [];
   const seen = new Set();
-  const selectors = [
-    ".page-item-detail.manga",
-    ".row.c-tabs-item__content",
-    ".c-tabs-item__content",
-    ".manga-item"
-  ];
-  for (const selector of selectors) {
-    for (const el of doc.querySelectorAll(selector)) {
-      const x = card(el);
-      if (x && !seen.has(x.id)) {
-        seen.add(x.id);
-        result.push(x);
-      }
-    }
-    if (result.length) return result;
+  for (const a of doc.querySelectorAll("a[href]")) {
+    const id = mangaId(a.attr("href") || "");
+    if (!id || seen.has(id)) continue;
+    const x = card(a) || { id, title: text(a.attr("title")) || text(a.text()) || id, cover: undefined };
+    seen.add(id);
+    result.push(x);
   }
   return result;
 }
@@ -82,26 +73,39 @@ const plugin = {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
     const paths = page === 1 ? ["/latest/", "/"] : ["/latest/page/" + page + "/", "/page/" + page + "/"];
     for (const path of paths) {
-      try { const result = cards(await getDoc(path)); if (result.length) return result; } catch (_) {}
-    }
-    return [];
-  },
-
-  async search(query, offset) {
-    const value = text(query);
-    if (!value) return [];
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const q = encodeURIComponent(value);
-    const paths = page === 1
-      ? ["/?s=" + q, "/search/" + q + "/"]
-      : ["/?s=" + q + "&paged=" + page, "/search/" + q + "/page/" + page + "/"];
-    for (const path of paths) {
       try {
         const result = cards(await getDoc(path));
         if (result.length) return result;
       } catch (_) {}
     }
     return [];
+  },
+
+  async search(query, offset) {
+    const value = text(query).toLowerCase();
+    if (!value) return [];
+    const page = Math.floor(offset / PAGE_SIZE) + 1;
+    const paths = page === 1 ? ["/latest/", "/"] : ["/latest/page/" + page + "/", "/page/" + page + "/"];
+    const result = [];
+    const seen = new Set();
+
+    // Search through the same server-rendered catalog used by the working listing.
+    // This avoids relying on MangaLik's search endpoint, which may return a page
+    // that Harbor cannot parse consistently.
+    for (const path of paths) {
+      try {
+        const items = cards(await getDoc(path));
+        for (const item of items) {
+          const hay = (item.title + " " + item.id).toLowerCase();
+          if (hay.includes(value) && !seen.has(item.id)) {
+            seen.add(item.id);
+            result.push(item);
+          }
+        }
+        if (result.length) return result;
+      } catch (_) {}
+    }
+    return result;
   },
 
   async detail(id) {
@@ -122,21 +126,15 @@ const plugin = {
     const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
     const result = [];
     const seen = new Set();
-    const selectors = [".wp-manga-chapter a", ".listing-chapters_wrap a", ".c-tabs-item__content a"];
-    for (const selector of selectors) {
-      for (const a of doc.querySelectorAll(selector)) {
-        const c = chapter(a);
-        if (c && !seen.has(c.id)) { seen.add(c.id); result.push(c); }
-      }
-      if (result.length) break;
+    for (const a of doc.querySelectorAll("a[href]")) {
+      const c = chapter(a);
+      if (c && !seen.has(c.id)) { seen.add(c.id); result.push(c); }
     }
-    if (!result.length) {
-      for (const a of doc.querySelectorAll("a[href]")) {
-        const c = chapter(a);
-        if (c && !seen.has(c.id)) { seen.add(c.id); result.push(c); }
-      }
-    }
-    result.sort((a, b) => parseFloat(b.chapter) - parseFloat(a.chapter));
+    result.sort((a, b) => {
+      const x = parseFloat(a.chapter), y = parseFloat(b.chapter);
+      if (Number.isNaN(x) || Number.isNaN(y)) return 0;
+      return y - x;
+    });
     return result;
   },
 
