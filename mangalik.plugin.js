@@ -16,21 +16,28 @@ function abs(url) {
   return BASE + "/" + url;
 }
 
+function pathOf(url) {
+  const u = abs(url);
+  if (!u) return "";
+  return u.replace(/^https?:\/\/[^/]+/i, "");
+}
+
 async function getDoc(path, options) {
   const res = await harbor.http(BASE + path, Object.assign({
     responseType: "text",
     timeoutMs: 30000,
-    headers: { Referer: BASE + "/" }
+    headers: { Referer: BASE + "/", "User-Agent": "Mozilla/5.0" }
   }, options || {}));
   if (!res.ok) throw new Error("http " + res.status + " for " + path);
   return harbor.parseHtml(res.body || "");
 }
 
 function mangaIdFromHref(href) {
-  if (!href) return null;
-  const s = String(href).trim().replace(BASE, "");
-  const m = s.match(/^\/manga\/([^/?#]+)\/?$/i);
-  return m ? m[1] : null;
+  const p = pathOf(href);
+  if (!p) return null;
+  // A manga work has exactly one path segment after /manga/.
+  const m = p.match(/^\/manga\/([^/?#]+)\/?(?:[?#].*)?$/i);
+  return m ? decodeURIComponent(m[1]) : null;
 }
 
 function findCover(link) {
@@ -45,8 +52,10 @@ function findCover(link) {
 }
 
 function findTitle(link) {
-  const title = clean(link.attr("title"));
-  if (title) return title;
+  const direct = clean(link.attr("title"));
+  if (direct) return direct;
+  let text = clean(link.text());
+  if (text) return text;
   let el = link;
   for (let i = 0; i < 6 && el; i++, el = el.parentElement) {
     for (const sel of [".post-title", ".item-summary h3", ".summary_content h3", "h3", "h4", ".manga-title"]) {
@@ -55,13 +64,13 @@ function findTitle(link) {
       if (t) return t;
     }
   }
-  return clean(link.text());
+  return undefined;
 }
 
 function findMangaLinks(doc) {
   const out = [];
   const seen = new Set();
-  // Do not use attribute selectors here: keep this compatible with Harbor's DOM parser.
+  // MangaLik pages expose work links as /manga/<slug>/.
   for (const a of doc.querySelectorAll("a")) {
     const href = a.attr("href") || "";
     const id = mangaIdFromHref(href);
@@ -77,7 +86,7 @@ function findMangaLinks(doc) {
 function chapterNumber(text, href) {
   const s = clean(text) || String(href || "");
   let m = s.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  if (!m) m = s.match(/\/([0-9]+(?:\.[0-9]+)?)(?:\/)?(?:\?|#|$)/);
+  if (!m) m = s.match(/\/([0-9]+(?:\.[0-9]+)?)\/?(?:\?|#|$)/);
   if (!m) m = s.match(/([0-9]+(?:\.[0-9]+)?)/);
   return m ? m[1] : null;
 }
@@ -88,8 +97,8 @@ function chaptersFromDoc(doc) {
   for (const a of doc.querySelectorAll("a")) {
     const href = abs(a.attr("href") || "");
     if (!href || seen.has(href)) continue;
-    const path = href.replace(BASE, "");
-    const m = path.match(/^\/manga\/([^/]+)\/([^/?#]+)\/?$/i);
+    const p = pathOf(href);
+    const m = p.match(/^\/manga\/([^/]+)\/([^/?#]+)\/?$/i);
     if (!m) continue;
     const title = clean(a.text()) || clean(a.attr("title"));
     const number = a.attr("data-number") || chapterNumber(title, href);
@@ -107,24 +116,46 @@ function chaptersFromDoc(doc) {
   return out;
 }
 
+async function tryListing(paths) {
+  for (const path of paths) {
+    try {
+      const items = findMangaLinks(await getDoc(path));
+      if (items.length) return items;
+    } catch (_) {}
+  }
+  return [];
+}
+
 const plugin = {
   id: "mangalik",
   name: "مانجا ليك",
 
   async popular(offset) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    // MangaLik's homepage is the reliable listing page. /manga/ is not the same listing.
-    const path = page <= 1 ? "/" : "/page/" + page + "/";
-    return findMangaLinks(await getDoc(path));
+    const paths = page === 1
+      ? ["/", "/latest/"]
+      : ["/page/" + page + "/", "/latest/page/" + page + "/"];
+    return tryListing(paths);
   },
 
   async search(query, offset) {
+    const q = String(query || "").trim();
+    if (!q) return this.popular(offset);
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const q = encodeURIComponent(String(query || "").trim());
-    // WordPress/Madara search endpoint used by MangaLik.
-    let path = "/?s=" + q + "&post_type=wp-manga";
-    if (page > 1) path += "&page=" + page;
-    return findMangaLinks(await getDoc(path));
+    const e = encodeURIComponent(q);
+    const paths = [
+      "/?s=" + e + "&post_type=wp-manga",
+      "/manga/?s=" + e + "&post_type=wp-manga",
+      "/?s=" + e,
+      "/search/" + e + "/"
+    ];
+    if (page > 1) {
+      paths.unshift(
+        "/page/" + page + "/?s=" + e + "&post_type=wp-manga",
+        "/manga/page/" + page + "/?s=" + e + "&post_type=wp-manga"
+      );
+    }
+    return tryListing(paths);
   },
 
   async detail(id) {
@@ -145,17 +176,15 @@ const plugin = {
   },
 
   async chapters(id) {
-    const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
-    return chaptersFromDoc(doc);
+    return chaptersFromDoc(await getDoc("/manga/" + encodeURIComponent(id) + "/"));
   },
 
   async pageUrls(chapterId) {
-    let path = String(chapterId).replace(/^https?:\/\/[^/]+/i, "");
-    if (!path.startsWith("/")) path = "/" + path;
+    const path = pathOf(chapterId);
     const res = await harbor.http(BASE + path, {
       responseType: "text",
       timeoutMs: 30000,
-      headers: { Referer: BASE + "/" }
+      headers: { Referer: BASE + "/", "User-Agent": "Mozilla/5.0" }
     });
     if (!res.ok) throw new Error("http " + res.status + " for " + path);
     const doc = await harbor.parseHtml(res.body || "");
