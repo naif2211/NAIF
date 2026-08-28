@@ -1,6 +1,7 @@
 // Harbor source for onma.me (مانجا اون لاين)
 const BASE = "https://onma.me";
 const PAGE_SIZE = 48;
+const CHAPTER_SUFFIX = "";
 
 function clean(text) {
   return text ? String(text).replace(/\s+/g, " ").trim() : "";
@@ -47,36 +48,24 @@ function firstAttr(el, selectors, attrs) {
   return undefined;
 }
 
-function imageUrl(img) {
-  if (!img) return undefined;
-  return abs(
-    img.attr("data-src") ||
-    img.attr("data-lazy-src") ||
-    img.attr("data-original") ||
-    img.attr("data-image") ||
-    img.attr("data-url") ||
-    img.attr("src")
-  );
-}
-
 function mangaIdFromHref(href) {
   if (!href) return null;
-  const s = String(href).replace(/^https?:\/\/[^/]+/i, "");
-  const m = s.match(/^\/manga\/([^/?#]+)\/?(?:[?#].*)?$/i);
-  return m ? decodeURIComponent(m[1]) : null;
+  const m = String(href).match(/\/manga\/([^/?#]+)\/?(?:[?#].*)?$/i);
+  return m ? m[1] : null;
 }
 
 function cardToSummary(el) {
-  const link = el.querySelector("a[href^='/manga/']") || el.querySelector("a[href*='/manga/']");
+  const link = el.querySelector("div.post-title a") || el.querySelector(".post-title a") || el.querySelector("a[href^='/manga/']");
   if (!link) return null;
-  const id = mangaIdFromHref(link.attr("href") || "");
+  const href = link.attr("href") || "";
+  const id = mangaIdFromHref(href);
   if (!id) return null;
 
+  const img = el.querySelector("img");
   const title = clean(
-    firstText(el, [".post-title h3", ".post-title h4", ".post-title", "h3", "h4", ".item-summary .summary-content .post-title"]) ||
     link.attr("title") ||
-    link.attr("aria-label") ||
-    el.querySelector("img")?.attr("alt") ||
+    firstText(el, [".post-title h3", ".post-title h4", ".item-summary h3", ".summary_content h3", "h3", "h4"]) ||
+    img?.attr("alt") ||
     link.text()
   );
   if (!title) return null;
@@ -84,7 +73,7 @@ function cardToSummary(el) {
   return {
     id,
     title,
-    cover: imageUrl(el.querySelector("img"))
+    cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src"))
   };
 }
 
@@ -92,14 +81,15 @@ function findCards(doc) {
   const selectors = [
     "div.page-item-detail",
     ".page-item-detail.manga",
-    ".manga-item",
+    ".manga__item",
+    ".c-tabs-item__content .row.c-tabs-item__content",
     ".row.c-tabs-item__content",
-    ".item-summary",
-    "article"
+    ".tab-thumb.c-tabs-item__content",
+    ".manga-item",
+    ".item-summary"
   ];
   const out = [];
   const seen = new Set();
-
   for (const sel of selectors) {
     for (const el of doc.querySelectorAll(sel)) {
       const item = cardToSummary(el);
@@ -108,46 +98,31 @@ function findCards(doc) {
         out.push(item);
       }
     }
-    if (out.length) return out;
+    if (out.length) break;
   }
-
-  for (const a of doc.querySelectorAll("a[href^='/manga/']")) {
-    const id = mangaIdFromHref(a.attr("href") || "");
-    if (!id || seen.has(id)) continue;
-    const title = clean(a.attr("title") || a.attr("aria-label") || a.text() || a.querySelector("img")?.attr("alt"));
-    if (!title) continue;
-    const parent = a.parentElement;
-    seen.add(id);
-    out.push({ id, title, cover: imageUrl(parent?.querySelector("img") || a.querySelector("img")) });
-  }
-
   return out;
 }
 
 function chapterNumber(text, href) {
-  const label = clean(text);
-  let m = label.match(/(?:^|\s)#?\s*([0-9]+(?:\.[0-9]+)?)(?:\s|:|$)/);
-  if (m) return m[1];
-
-  const url = String(href || "");
-  m = url.match(/\/manga\/[^/]+\/([0-9]+(?:\.[0-9]+)?)\/?(?:[?#].*)?$/i);
+  const s = clean(text) || String(href || "");
+  let m = s.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (!m) m = s.match(/\/manga\/[^/]+\/([0-9]+(?:\.[0-9]+)?)\/?(?:\?|#|$)/i);
+  if (!m) m = s.match(/([0-9]+(?:\.[0-9]+)?)/);
   return m ? m[1] : null;
 }
 
 function chapterFromLink(a) {
-  const raw = a.attr("href") || "";
-  const href = abs(raw);
-  if (!href) return null;
-  if (!/^\/manga\/[^/]+\/[^/]+/i.test(raw.replace(/^https?:\/\/[^/]+/i, ""))) return null;
+  let href = abs(a.attr("href") || "");
+  if (!href || !/\/manga\/[^/]+\/[0-9]+(?:\.[0-9]+)?\/?(?:[?#].*)?$/i.test(href)) return null;
+  if (CHAPTER_SUFFIX && !href.includes(CHAPTER_SUFFIX)) href += CHAPTER_SUFFIX;
 
   const title = clean(a.text());
-  const number = chapterNumber(title, raw);
+  const number = a.attr("data-number") || chapterNumber(title, href);
   if (!number) return null;
-
   return {
     id: href,
     chapter: number,
-    title: title || "#" + number,
+    title: title || "Chapter " + number,
     volume: null,
     pages: 0,
     language: "ar"
@@ -157,14 +132,13 @@ function chapterFromLink(a) {
 function chaptersFromDoc(doc) {
   const out = [];
   const seen = new Set();
-
-  // ONMA chapter links are internal /manga/<slug>/<chapter>.
-  // Do not use the separate external "تحميل" links (shrinkme.io).
   const selectors = [
-    "li.wp-manga-chapter a[href^='/manga/']",
-    ".wp-manga-chapter a[href^='/manga/']",
-    ".chapter-list a[href^='/manga/']",
-    ".chapters a[href^='/manga/']"
+    "li.wp-manga-chapter a",
+    ".version-chap li.wp-manga-chapter a",
+    ".main.version-chap li a",
+    "div.wp-manga-chapter a",
+    ".chapter-list a[href*='/manga/']",
+    ".chapters a[href*='/manga/']"
   ];
 
   for (const sel of selectors) {
@@ -174,10 +148,8 @@ function chaptersFromDoc(doc) {
       seen.add(c.id);
       out.push(c);
     }
-    if (out.length) break;
+    if (out.length) return out;
   }
-
-  out.sort((a, b) => parseFloat(b.chapter) - parseFloat(a.chapter));
   return out;
 }
 
@@ -185,114 +157,80 @@ const plugin = {
   id: "onma",
   name: "مانجا اون لاين",
 
-  async popular(offset) {
+  async popular(offset, tagId) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    for (const path of [
-      "/manga/?m_orderby=views&page=" + page,
-      "/manga-list?page=" + page,
-      "/manga/?page=" + page
-    ]) {
-      try {
-        const list = findCards(await getDoc(path));
-        if (list.length) return list;
-      } catch (_) {}
-    }
-    return [];
+    let path = "/manga/?m_orderby=views&page=" + page;
+    if (tagId) path += "&genre=" + encodeURIComponent(tagId);
+    return findCards(await getDoc(path));
   },
 
-  async search(query, offset) {
+  async search(query, offset, tagId) {
     const page = Math.floor(offset / PAGE_SIZE) + 1;
-    for (const path of [
-      "/manga/?s=" + encodeURIComponent(query) + "&post_type=wp-manga&page=" + page,
-      "/?s=" + encodeURIComponent(query) + "&page=" + page,
-      "/manga/?s=" + encodeURIComponent(query) + "&page=" + page
-    ]) {
-      try {
-        const list = findCards(await getDoc(path));
-        if (list.length) return list;
-      } catch (_) {}
-    }
-    return [];
+    let path = "/manga/?s=" + encodeURIComponent(query) + "&post_type=wp-manga&page=" + page;
+    if (tagId) path += "&genre=" + encodeURIComponent(tagId);
+    return findCards(await getDoc(path));
   },
 
   async detail(id) {
-    const doc = await getDoc("/manga/" + encodeURIComponent(id));
+    const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
     const root = doc.querySelector(".site-content") || doc;
-
-    const cover = firstAttr(
-      root,
-      [".summary_image", ".summary_image img", ".profile-manga .summary_image", ".tab-summary .summary_image"],
-      ["data-src", "data-lazy-src", "data-original", "data-image", "src"]
-    );
-
     return {
       id,
       title: clean(root.querySelector("div.post-title h1")?.text()) || clean(root.querySelector("h1")?.text()) || id,
-      altTitle: firstText(root, [".post-content_item.manga_alternative .summary-content", ".alternative", ".other-name"]),
-      cover: abs(cover),
-      author: firstText(root, [".post-content_item.manga-authors .summary-content", ".post-content_item.manga-author .summary-content", ".author-content"]),
-      status: firstText(root, [".post-content_item.manga-status .summary-content", ".post-content_item.manga_status .summary-content", ".manga-status"]),
-      description: firstText(root, [".description-summary .summary__content", ".description-summary", ".summary_content", ".summary__content"]),
-      lastChapter: firstText(root, ["li.wp-manga-chapter a[href^='/manga/']", ".wp-manga-chapter a[href^='/manga/']"])
+      altTitle: firstText(root, [".alternative", ".post-content_item.manga_alternative .summary-content"]),
+      cover: abs(firstAttr(root, [".summary_image", ".profile-manga", ".tab-summary .summary_image"], ["data-src", "data-lazy-src", "data-original", "src"])),
+      author: firstText(root, [".author-content", ".post-content_item.manga-authors .summary-content", ".post-content_item.manga-author .summary-content"]),
+      status: firstText(root, [".post-content_item.manga-status .summary-content", ".post-content_item.manga_status .summary-content"]),
+      description: firstText(root, [".summary__content", ".description-summary .summary__content", ".description-summary"]),
+      lastChapter: firstText(root, [".wp-manga-chapter a", "li.wp-manga-chapter a"])
     };
   },
 
   async chapters(id) {
-    return chaptersFromDoc(await getDoc("/manga/" + encodeURIComponent(id)));
+    return chaptersFromDoc(await getDoc("/manga/" + encodeURIComponent(id) + "/"));
   },
 
   async pageUrls(chapterId) {
     const path = "/" + String(chapterId).replace(/^https?:\/\/[^/]+/i, "").replace(/^\//, "");
-    const doc = await getDoc(path);
+    const res = await harbor.http(BASE + path, {
+      responseType: "text",
+      timeoutMs: 30000,
+      headers: { Referer: BASE + "/" }
+    });
+    if (!res.ok) throw new Error("http " + res.status + " for " + path);
+    const doc = await harbor.parseHtml(res.body || "");
     const urls = [];
     const seen = new Set();
 
-    const selectors = [
+    for (const sel of [
       ".reading-content .page-break img",
       ".reading-content img",
-      ".wp-manga-chapter-img",
+      ".page-break img",
       ".wp-manga-chapter-img img",
-      ".chapter-content img",
-      ".reader-content img",
-      ".page-content img",
       ".entry-content img"
-    ];
-
-    for (const sel of selectors) {
+    ]) {
       for (const img of doc.querySelectorAll(sel)) {
-        const url = imageUrl(img);
-        if (!url || seen.has(url)) continue;
-        seen.add(url);
-        urls.push(url);
+        const u = abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src"));
+        if (!u || seen.has(u)) continue;
+        seen.add(u);
+        urls.push(u);
       }
       if (urls.length) break;
     }
-
-    // Fallback for readers that expose the images only through links.
-    if (!urls.length) {
-      for (const a of doc.querySelectorAll("a[href]")) {
-        const href = abs(a.attr("href") || "");
-        if (!href || !/\.(?:jpe?g|png|webp|gif)(?:\?|#|$)/i.test(href)) continue;
-        if (seen.has(href)) continue;
-        seen.add(href);
-        urls.push(href);
-      }
-    }
-
     return urls;
   },
 
   async tags() {
-    const doc = await getDoc("/manga-list");
+    const doc = await getDoc("/manga/");
     const out = [];
     const seen = new Set();
-    for (const a of doc.querySelectorAll("a[href*='/category/'], a[href*='/genre/']")) {
+    for (const a of doc.querySelectorAll(".genres-content a, .genres a, .manga-genres a")) {
       const name = clean(a.text());
       const href = a.attr("href") || "";
-      const m = href.match(/\/(?:category|genre)\/([^/?#]+)/i);
+      const m = href.match(/\/genre\/([^/?#]+)/i);
       if (!name || !m || seen.has(m[1])) continue;
       seen.add(m[1]);
-      out.push({ id: decodeURIComponent(m[1]), name, group: "Genre" });
+      out.push({ id: m[1], name, group: "Genre" });
     }
     return out;
   }
