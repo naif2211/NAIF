@@ -1,3 +1,4 @@
+// MangaLik source for Harbor
 const BASE = "https://mangalik.net";
 const PAGE_SIZE = 48;
 
@@ -40,15 +41,37 @@ function card(el) {
 function cards(doc) {
   const result = [];
   const seen = new Set();
-  const selectors = [".page-item-detail.manga", ".row.c-tabs-item__content", ".c-tabs-item__content", ".manga-item"];
+  const selectors = [
+    ".page-item-detail.manga",
+    ".row.c-tabs-item__content",
+    ".c-tabs-item__content",
+    ".manga-item"
+  ];
   for (const selector of selectors) {
     for (const el of doc.querySelectorAll(selector)) {
       const x = card(el);
-      if (x && !seen.has(x.id)) { seen.add(x.id); result.push(x); }
+      if (x && !seen.has(x.id)) {
+        seen.add(x.id);
+        result.push(x);
+      }
     }
     if (result.length) return result;
   }
   return result;
+}
+
+function chapter(a) {
+  const href = a.attr("href") || "";
+  const u = abs(href) || "";
+  const p = u.replace(/^https?:\/\/[^/]+/i, "");
+  if (!/^\/manga\/[^/?#]+\/[^/?#]+\/?$/i.test(p)) return null;
+  const m = p.match(/^\/manga\/([^/?#]+)\/([^/?#]+)\/?$/i);
+  if (!m) return null;
+  const label = text(a.text()) || text(a.attr("title")) || m[2];
+  const number = (label.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) || [])[1]
+    || (m[2].match(/([0-9]+(?:\.[0-9]+)?)/) || [])[1]
+    || m[2];
+  return { id: u, chapter: number, title: label || "Chapter " + number, volume: null, pages: 0, language: "ar" };
 }
 
 const plugin = {
@@ -64,22 +87,21 @@ const plugin = {
     return [];
   },
 
-  // Search only. All other plugin methods are intentionally unchanged.
   async search(query, offset) {
     const value = text(query);
     if (!value) return [];
     const page = Math.floor(offset / PAGE_SIZE) + 1;
     const q = encodeURIComponent(value);
-
-    // MangaLik's search endpoint is the normal WordPress search. Do not use
-    // post_type or /manga/?s because those can return incomplete/empty Madara pages.
-    const path = page === 1
-      ? "/?s=" + q
-      : "/page/" + page + "/?s=" + q;
-
-    const doc = await getDoc(path);
-    const result = cards(doc);
-    return result;
+    const paths = page === 1
+      ? ["/?s=" + q, "/search/" + q + "/"]
+      : ["/?s=" + q + "&paged=" + page, "/search/" + q + "/page/" + page + "/"];
+    for (const path of paths) {
+      try {
+        const result = cards(await getDoc(path));
+        if (result.length) return result;
+      } catch (_) {}
+    }
+    return [];
   },
 
   async detail(id) {
@@ -103,32 +125,18 @@ const plugin = {
     const selectors = [".wp-manga-chapter a", ".listing-chapters_wrap a", ".c-tabs-item__content a"];
     for (const selector of selectors) {
       for (const a of doc.querySelectorAll(selector)) {
-        const href = a.attr("href") || "";
-        const u = abs(href) || "";
-        const p = u.replace(/^https?:\/\/[^/]+/i, "");
-        const m = p.match(/^\/manga\/([^/?#]+)\/([^/?#]+)\/?$/i);
-        if (!m || seen.has(u)) continue;
-        const label = text(a.text()) || text(a.attr("title")) || m[2];
-        const n = (label.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) || [])[1] || (m[2].match(/([0-9]+(?:\.[0-9]+)?)/) || [])[1] || m[2];
-        seen.add(u);
-        result.push({ id: u, chapter: n, title: label || "Chapter " + n, volume: null, pages: 0, language: "ar" });
+        const c = chapter(a);
+        if (c && !seen.has(c.id)) { seen.add(c.id); result.push(c); }
       }
       if (result.length) break;
     }
     if (!result.length) {
       for (const a of doc.querySelectorAll("a[href]")) {
-        const href = a.attr("href") || "";
-        const u = abs(href) || "";
-        const p = u.replace(/^https?:\/\/[^/]+/i, "");
-        const m = p.match(/^\/manga\/([^/?#]+)\/([^/?#]+)\/?$/i);
-        if (!m || seen.has(u)) continue;
-        const label = text(a.text()) || text(a.attr("title")) || m[2];
-        const n = (label.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) || [])[1] || (m[2].match(/([0-9]+(?:\.[0-9]+)?)/) || [])[1] || m[2];
-        seen.add(u);
-        result.push({ id: u, chapter: n, title: label || "Chapter " + n, volume: null, pages: 0, language: "ar" });
+        const c = chapter(a);
+        if (c && !seen.has(c.id)) { seen.add(c.id); result.push(c); }
       }
     }
-    result.sort((a,b) => parseFloat(b.chapter) - parseFloat(a.chapter));
+    result.sort((a, b) => parseFloat(b.chapter) - parseFloat(a.chapter));
     return result;
   },
 
