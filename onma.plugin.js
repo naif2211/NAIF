@@ -1,7 +1,8 @@
-// Harbor source for onma.me - based on working 3asq structure
+// Harbor source for onma.me
 const BASE = "https://onma.me";
-const PAGE_SIZE = 48;
-const MAX_SEARCH_PAGES = 15;
+// ONMA currently shows 18 manga entries per /manga-list page.
+const PAGE_SIZE = 18;
+const MAX_CATALOG_PAGES = 15;
 
 function clean(text) {
   return text ? String(text).replace(/\s+/g, " ").trim() : "";
@@ -19,14 +20,7 @@ function abs(url) {
 
 function imageUrl(img) {
   if (!img) return undefined;
-  return abs(
-    img.attr("data-src") ||
-    img.attr("data-lazy-src") ||
-    img.attr("data-original") ||
-    img.attr("data-url") ||
-    img.attr("data-image") ||
-    img.attr("src")
-  );
+  return abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("data-url") || img.attr("data-image") || img.attr("src"));
 }
 
 async function getDoc(path, options) {
@@ -68,9 +62,8 @@ function mangaIdFromHref(href) {
 }
 
 function nearestImage(el) {
-  if (!el) return undefined;
   let cur = el;
-  for (let i = 0; i < 4 && cur; i++) {
+  for (let i = 0; i < 6 && cur; i++) {
     const img = cur.querySelector("img");
     if (img) return imageUrl(img);
     cur = cur.parentElement;
@@ -78,75 +71,53 @@ function nearestImage(el) {
   return undefined;
 }
 
-function cardToSummary(el) {
-  const links = el.querySelectorAll("a[href^='/manga/'], a[href*='/manga/']");
-  for (const link of links) {
-    const id = mangaIdFromHref(link.attr("href") || "");
-    if (!id) continue;
+function summaryFromLink(a) {
+  const id = mangaIdFromHref(a.attr("href") || "");
+  if (!id) return null;
 
-    const img = link.querySelector("img") || el.querySelector("img");
-    const title = clean(
-      link.attr("title") ||
-      link.attr("aria-label") ||
-      img?.attr("alt") ||
-      firstText(el, ["h1", "h2", "h3", "h4", ".title", ".name", ".post-title"]) ||
-      link.text()
-    );
-    if (!title) continue;
+  let cur = a;
+  let img;
+  let title = clean(a.attr("title") || a.attr("aria-label") || a.text());
 
-    return { id, title, cover: imageUrl(img) || nearestImage(link) };
+  // On ONMA the cover link and title link can be separate siblings.
+  // Walk upward until we find the complete manga card.
+  for (let i = 0; i < 6 && cur; i++) {
+    img = cur.querySelector("img") || img;
+    if (!title) {
+      title = firstText(cur, ["h1", "h2", "h3", "h4", ".title", ".name", ".post-title"]);
+    }
+    if (img && title) break;
+    cur = cur.parentElement;
   }
-  return null;
+
+  if (!title && img) title = clean(img.attr("alt"));
+  if (!title) return null;
+
+  return { id, title, cover: imageUrl(img) || nearestImage(a) };
 }
 
 function findCards(doc) {
   const out = [];
   const seen = new Set();
 
-  // ONMA's /manga-list page contains the catalog cards.
-  const cardSelectors = [
-    ".manga-list .item",
-    ".manga-list li",
-    ".manga-list article",
-    ".row .item",
-    "article",
-    ".manga-item",
-    ".item"
-  ];
-
-  for (const sel of cardSelectors) {
-    for (const el of doc.querySelectorAll(sel)) {
-      const item = cardToSummary(el);
-      if (item && !seen.has(item.id)) {
-        seen.add(item.id);
-        out.push(item);
-      }
-    }
-  }
-
-  // Reliable fallback: collect every direct /manga/ work link on the page.
+  // Do not depend on one card class. The important stable part of ONMA's
+  // catalog is the direct /manga/<slug> link.
   for (const a of doc.querySelectorAll("a[href^='/manga/'], a[href*='/manga/']")) {
-    const id = mangaIdFromHref(a.attr("href") || "");
-    if (!id || seen.has(id)) continue;
-
-    const img = a.querySelector("img") || a.parentElement?.querySelector("img") || a.parentElement?.parentElement?.querySelector("img");
-    const title = clean(
-      a.attr("title") ||
-      a.attr("aria-label") ||
-      img?.attr("alt") ||
-      a.text()
-    );
-    if (!title) continue;
-
-    seen.add(id);
-    out.push({ id, title, cover: imageUrl(img) || nearestImage(a) });
+    const item = summaryFromLink(a);
+    if (!item || seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
   }
 
   return out;
 }
 
 function normalizeQuery(text) {
-  return clean(text).toLocaleLowerCase().replace(/[إأآ]/g, "ا");
+  return clean(text)
+    .toLocaleLowerCase()
+    .replace(/[إأآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
 }
 
 function chapterNumber(text, href) {
@@ -164,11 +135,9 @@ function chapterNumber(text, href) {
 function chapterFromLink(a) {
   const href = abs(a.attr("href") || "");
   if (!href) return null;
-
   const title = clean(a.text());
   const number = a.attr("data-number") || chapterNumber(title, href);
   if (!number) return null;
-
   return {
     id: href,
     chapter: number,
@@ -182,7 +151,6 @@ function chapterFromLink(a) {
 function chaptersFromDoc(doc) {
   const out = [];
   const seen = new Set();
-
   const selectors = [
     "li.wp-manga-chapter a",
     ".wp-manga-chapter a",
@@ -200,7 +168,6 @@ function chaptersFromDoc(doc) {
     }
     if (out.length) return out;
   }
-
   return out;
 }
 
@@ -278,6 +245,7 @@ const plugin = {
   name: "مانجا اون لاين",
 
   async popular(offset) {
+    // Harbor offset is an item offset; ONMA's catalog has 18 items/page.
     const page = Math.floor(offset / PAGE_SIZE) + 1;
     return catalogPage(page);
   },
@@ -286,34 +254,14 @@ const plugin = {
     const wanted = normalizeQuery(query);
     if (!wanted) return this.popular(offset);
 
-    // Try the site's possible search endpoints first.
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const q = encodeURIComponent(query);
-    const directPaths = [
-      "/manga-list?search=" + q + "&page=" + page,
-      "/manga-list?s=" + q + "&page=" + page,
-      "/manga-list?title=" + q + "&page=" + page,
-      "/advanced-search?search=" + q + "&page=" + page
-    ];
-
-    for (const path of directPaths) {
-      try {
-        const list = findCards(await getDoc(path));
-        if (list.length) {
-          const exact = list.filter(x => normalizeQuery(x.title).includes(wanted));
-          if (exact.length) return exact;
-        }
-      } catch (_) {}
-    }
-
-    // ONMA's catalog is paginated. If its search form is not exposed to
-    // Harbor's plain HTTP parser, search the catalog itself instead.
-    const matches = [];
+    // ONMA's visible catalog has reliable pagination, while its search form
+    // is not exposed as a stable GET endpoint to Harbor's plain HTTP parser.
+    // Search the actual catalog pages and then paginate the matched results.
+    const all = [];
     const seen = new Set();
-    const startPage = Math.max(1, page);
 
-    for (let p = startPage; p <= MAX_SEARCH_PAGES && matches.length < PAGE_SIZE; p++) {
-      let list = [];
+    for (let p = 1; p <= MAX_CATALOG_PAGES; p++) {
+      let list;
       try {
         list = await catalogPage(p);
       } catch (_) {
@@ -323,15 +271,12 @@ const plugin = {
 
       for (const item of list) {
         if (seen.has(item.id)) continue;
-        if (normalizeQuery(item.title).includes(wanted)) {
-          seen.add(item.id);
-          matches.push(item);
-          if (matches.length >= PAGE_SIZE) break;
-        }
+        seen.add(item.id);
+        if (normalizeQuery(item.title).includes(wanted)) all.push(item);
       }
     }
 
-    return matches;
+    return all.slice(offset, offset + PAGE_SIZE);
   },
 
   async detail(id) {
@@ -365,7 +310,6 @@ const plugin = {
     const doc = await harbor.parseHtml(res.body || "");
     const urls = [];
     const seen = new Set();
-
     for (const sel of [
       ".reading-content .page-break img",
       ".reading-content img",
@@ -384,7 +328,6 @@ const plugin = {
       }
       if (urls.length) break;
     }
-
     return urls;
   },
 
@@ -392,7 +335,6 @@ const plugin = {
     const doc = await getDoc("/manga-list");
     const out = [];
     const seen = new Set();
-
     for (const a of doc.querySelectorAll("a[href*='/category/'], .genres-content a, .genres a, .manga-genres a, a[href*='/genre/']")) {
       const name = clean(a.text());
       const href = a.attr("href") || "";
@@ -401,7 +343,6 @@ const plugin = {
       seen.add(m[1]);
       out.push({ id: decodeURIComponent(m[1]), name, group: "Genre" });
     }
-
     return out;
   }
 };
