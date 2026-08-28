@@ -4,8 +4,8 @@
     {
       "id": "3asq",
       "name": "العاشق",
-      "version": "1.0.0",
-      "lang": "ar",
+      "version": "1.0.1",
+      "lang": "en",
       "nsfw": false,
       "icon": "https://3asq.online/favicon.ico",
       "entry": "3asq.plugin.js"
