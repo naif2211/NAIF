@@ -1,7 +1,12 @@
 {
-  "content": "{\n  \"name\": \"NAIF Manga Repo\",\n  \"iconUrl\": \"https://3asq.online/favicon.ico\",\n  \"baseUrl\": \"https://github.com/naif2211/NAIF/raw/refs/heads/main/\",\n  \"plugins\": [\n    {\"id\":\"3asq\",\"name\":\"العاشق\",\"version\":\"1.0.2\",\"lang\":\"ar\",\"nsfw\":false,\"icon\":\"https://3asq.online/favicon.ico\",\"entry\":\"3asq.plugin.js\"},\n    {\"id\":\"onma\",\"name\":\"مانجا اون لاين\",\"version\":\"1.0.0\",\"lang\":\"ar\",\"nsfw\":false,\"icon\":\"https://onma.me/favicon.ico\",\"entry\":\"onma.plugin.js\"},\n    {\"id\":\"azora\",\"name\":\"Azora Manga\",\"version\":\"1.0.0\",\"lang\":\"ar\",\"nsfw\":false,\"icon\":\"https://azorafly.com/favicon.ico\",\"entry\":\"azora.plugin.js\"},\n    {\"id\":\"mangalik\",\"name\":\"مانجا ليك\",\"version\":\"1.0.8\",\"lang\":\"ar\",\"nsfw\":false,\"icon\":\"https://mangalik.net/favicon.ico\",\"entry\":\"mangalik.plugin.js\"},\n    {\"id\":\"arcomixverse\",\"name\":\"Arcomixverse\",\"version\":\"1.0.0\",\"lang\":\"ar\",\"nsfw\":false,\"icon\":\"https://arcomixverse.blogspot.com/favicon.ico\",\"entry\":\"arcomixverse.plugin.js\"}\n  ]\n}\n",
-  "encoding": "utf-8",
-  "sha": "def746143ff1714371fb3629a031d6f58216bee5",
-  "display_url": "https://github.com/naif2211/NAIF/blob/main/repo.json",
-  "display_title": "repo.json"
+  "name": "NAIF Manga Repo",
+  "iconUrl": "https://3asq.online/favicon.ico",
+  "baseUrl": "https://github.com/naif2211/NAIF/raw/refs/heads/main/",
+  "plugins": [
+    {"id":"3asq","name":"العاشق","version":"1.0.2","lang":"ar","nsfw":false,"icon":"https://3asq.online/favicon.ico","entry":"3asq.plugin.js"},
+    {"id":"onma","name":"مانجا اون لاين","version":"1.0.0","lang":"ar","nsfw":false,"icon":"https://onma.me/favicon.ico","entry":"onma.plugin.js"},
+    {"id":"azora","name":"Azora Manga","version":"1.0.0","lang":"ar","nsfw":false,"icon":"https://azorafly.com/favicon.ico","entry":"azora.plugin.js"},
+    {"id":"mangalik","name":"مانجا ليك","version":"1.0.8","lang":"ar","nsfw":false,"icon":"https://mangalik.net/favicon.ico","entry":"mangalik.plugin.js"},
+    {"id":"arcomixverse","name":"Arcomixverse","version":"1.0.0","lang":"ar","nsfw":false,"icon":"https://arcomixverse.blogspot.com/favicon.ico","entry":"arcomixverse.plugin.js"}
+  ]
 }
