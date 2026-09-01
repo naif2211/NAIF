@@ -1,5 +1,5 @@
 // Harbor source for stellarsaber.pro
-// The site is a WordPress/Madara catalogue with direct, Arabic chapter permalinks.
+// The site is a WordPress/Madara catalogue with direct chapter permalinks.
 const BASE = "https://stellarsaber.pro";
 const PAGE_SIZE = 24;
 
@@ -116,7 +116,7 @@ function findCards(doc) {
 
 function chapterNumber(title, href) {
   const source = clean(title) || decodeURIComponent(String(href || ""));
-  let match = source.match(/(?:chapter|ch\.?|ط§ظ„ظپطµظ„|ظپطµظ„)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  let match = source.match(/(?:chapter|ch\.?)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
   if (!match) match = source.match(/(?:^|[-_\s/])([0-9]+(?:\.[0-9]+)?)(?:[-_\s/?#]|$)/);
   return match ? match[1] : undefined;
 }
@@ -124,7 +124,7 @@ function chapterNumber(title, href) {
 function chaptersFromDoc(doc) {
   const chapters = [];
   const seen = new Set();
-  // Chapter URLs here are top-level Arabic permalinks, not /chapter/... paths.
+  // Chapter URLs here are top-level permalinks, not /chapter/... paths.
   const selectors = [
     "li.wp-manga-chapter a[href]",
     ".version-chap li a[href]",
