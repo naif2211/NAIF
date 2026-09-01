@@ -1,7 +1,8 @@
 // Harbor source for stellarsaber.pro
 // The site is a WordPress/Madara catalogue with direct chapter permalinks.
 const BASE = "https://stellarsaber.pro";
-const PAGE_SIZE = 24;
+// Harbor requests the next page with offsets 0, 48, 96, ...
+const PAGE_SIZE = 48;
 
 function clean(value) {
   return value ? String(value).replace(/\s+/g, " ").trim() : "";
@@ -19,11 +20,7 @@ function abs(url) {
 
 async function getDoc(path) {
   const url = /^https?:\/\//i.test(path) ? path : BASE + path;
-  const res = await harbor.http(url, {
-    responseType: "text",
-    timeoutMs: 30000,
-    headers: { Referer: BASE + "/" }
-  });
+  const res = await harbor.http(url, { responseType: "text", timeoutMs: 18000 });
   if (!res.ok) throw new Error("http " + res.status + " for " + url);
   return harbor.parseHtml(res.body || "");
 }
