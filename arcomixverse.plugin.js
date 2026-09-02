@@ -1,114 +1,73 @@
 const BASE = "https://arcomixverse.blogspot.com";
+const PAGE_SIZE = 20;
 
-async function getRaw(path) {
+async function getDoc(path) {
   const url = /^https?:\/\//i.test(path) ? path : BASE + path;
   const res = await harbor.http(url, { responseType: "text" });
-  if (!res.ok) throw new Error("HTTP " + res.status + " for " + url);
-  return res.body || "";
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return harbor.parseHtml(res.body || "");
 }
 
-function abs(url, base) {
+function abs(url) {
   if (!url) return undefined;
   url = String(url).trim();
   if (/^https?:\/\//i.test(url)) return url;
-  if (url.startsWith("//")) return "https:" + url;
-  const b = base || BASE;
-  if (url.startsWith("/")) return b + url;
-  return b.replace(/\/$/, "") + "/" + url;
+  if (url.indexOf("//") === 0) return "https:" + url;
+  if (url.charAt(0) === "/") return BASE + url;
+  return BASE + "/" + url;
 }
 
-function text(v) {
-  return (v || "").replace(/\s+/g, " ").trim();
+function text(v) { return v ? String(v).replace(/\s+/g, " ").trim() : ""; }
+
+function imageUrl(img) {
+  if (!img) return undefined;
+  return abs(img.attr("data-src") || img.attr("data-original") || img.attr("data-lazy-src") || img.attr("src"));
 }
 
-function decode(v) {
-  return (v || "")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
-}
-
-function extractLinks(html) {
-  const out = [];
-  const seen = new Set();
-  const re = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    let href = decode(m[1]);
-    if (href.startsWith("//")) href = "https:" + href;
-    else if (!/^https?:\/\//i.test(href)) href = abs(href);
-    const label = text((m[2] || "").replace(/<[^>]+>/g, " "));
-    if (!href || !/^https?:\/\//i.test(href)) continue;
-    if (!href.includes("arcomixverse.blogspot.com")) continue;
-    if (!seen.has(href)) {
-      seen.add(href);
-      out.push({ href, label });
-    }
-  }
-  return out;
-}
-
-function extractImages(html, pageUrl) {
-  const out = [];
-  const seen = new Set();
-  const patterns = [
-    /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi,
-    /<img\b[^>]*\bdata-(?:src|original|lazy-src)\s*=\s*["']([^"']+)["'][^>]*>/gi
-  ];
-  for (const re of patterns) {
-    let m;
-    while ((m = re.exec(html))) {
-      let src = decode(m[1]);
-      if (!src || /^data:/i.test(src)) continue;
-      src = abs(src, pageUrl);
-      if (!src || /favicon|blogger_logo/i.test(src)) continue;
-      if (!seen.has(src)) {
-        seen.add(src);
-        out.push(src);
-      }
-    }
-  }
-  return out;
-}
-
-function extractIframes(html, pageUrl) {
-  const out = [];
-  const seen = new Set();
-  const re = /<iframe\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    let src = decode(m[1]);
-    src = abs(src, pageUrl);
-    if (src && !seen.has(src)) {
-      seen.add(src);
-      out.push(src);
-    }
-  }
-  return out;
+function isChapterTitle(title) {
+  return /(?:العدد|عدد|chapter|ch\.?)[\s_-]*#?[\s_-]*\d+/i.test(title) || /#\s*\d+/.test(title);
 }
 
 function chapterNumber(title) {
   const t = text(title);
-  let m = t.match(/(?:العدد|عدد|chapter|ch)\s*#?\s*(\d+(?:\.\d+)?)/i);
+  let m = t.match(/(?:العدد|عدد|chapter|ch\.?)[\s_-]*#?[\s_-]*(\d+(?:\.\d+)?)/i);
   if (m) return m[1];
   m = t.match(/#\s*(\d+(?:\.\d+)?)/);
   return m ? m[1] : null;
 }
 
-function makeSummary(post) {
-  const a = post.querySelector("h2.post-title a") || post.querySelector("h3.post-title a") || post.querySelector(".post-title a");
+function postItems(doc) {
+  const selectors = [".post-outer", ".blog-post", ".post"];
+  for (const selector of selectors) {
+    const items = doc.querySelectorAll(selector);
+    if (items.length) return items;
+  }
+  return [];
+}
+
+function getPost(item) {
+  const a = item.querySelector("h2.post-title a") ||
+    item.querySelector("h3.post-title a") ||
+    item.querySelector(".post-title a") ||
+    item.querySelector("h2 a") ||
+    item.querySelector("h3 a");
   if (!a) return null;
-  const href = a.attr("href");
-  const title = text(a.text());
-  if (!href || !title) return null;
-  const img = post.querySelector(".post-body img, img");
-  return {
-    id: href,
-    title,
-    cover: abs(img?.attr("data-src") || img?.attr("data-original") || img?.attr("src"))
-  };
+  const id = abs(a.attr("href"));
+  const title = text(a.attr("title")) || text(a.text());
+  if (!id || !title) return null;
+  return { id: id, title: title, cover: imageUrl(item.querySelector(".post-body img") || item.querySelector("img")) };
+}
+
+function listFromDoc(doc) {
+  const out = [];
+  const seen = new Set();
+  for (const item of postItems(doc)) {
+    const p = getPost(item);
+    if (!p || seen.has(p.id) || isChapterTitle(p.title)) continue;
+    seen.add(p.id);
+    out.push(p);
+  }
+  return out;
 }
 
 const plugin = {
@@ -117,83 +76,117 @@ const plugin = {
 
   async popular(offset) {
     const start = Math.max(0, Number(offset) || 0);
-    const doc = harbor.parseHtml(await getRaw("/search?q=&max-results=20&start=" + start));
-    return doc.querySelectorAll(".post-outer, .blog-post, .post").map(makeSummary).filter(Boolean);
+    const paths = [
+      "/?max-results=" + PAGE_SIZE + "&start=" + start,
+      "/search?max-results=" + PAGE_SIZE + "&start=" + start
+    ];
+    for (const path of paths) {
+      try {
+        const result = listFromDoc(await getDoc(path));
+        if (result.length) return result;
+      } catch (_) {}
+    }
+    return [];
   },
 
   async search(query, offset) {
+    const q = text(query);
+    if (!q) return this.popular(offset);
     const start = Math.max(0, Number(offset) || 0);
-    const doc = harbor.parseHtml(await getRaw("/search?q=" + encodeURIComponent(query) + "&max-results=20&start=" + start));
-    return doc.querySelectorAll(".post-outer, .blog-post, .post").map(makeSummary).filter(Boolean);
+    try {
+      return listFromDoc(await getDoc("/search?q=" + encodeURIComponent(q) + "&max-results=" + PAGE_SIZE + "&start=" + start));
+    } catch (_) {
+      return [];
+    }
   },
 
   async detail(id) {
     const url = /^https?:\/\//i.test(id) ? id : abs(id);
-    const html = await getRaw(url);
-    const doc = harbor.parseHtml(html);
-    const title = text(doc.querySelector("h1.post-title")?.text() || doc.querySelector("h2.post-title")?.text() || doc.querySelector("h1")?.text()) || id;
-    const img = doc.querySelector(".post-body img, .post img, img");
+    const doc = await getDoc(url);
+    const titleEl = doc.querySelector("h1.post-title") || doc.querySelector("h2.post-title") || doc.querySelector(".post-title") || doc.querySelector("h1");
+    const body = doc.querySelector(".post-body") || doc.querySelector(".post-content");
+    const img = body ? (body.querySelector("img") || doc.querySelector("img")) : doc.querySelector("img");
+    const authorEl = doc.querySelector(".fn") || doc.querySelector(".post-author");
+    const statusEl = doc.querySelector(".status");
     return {
       id: url,
-      title,
-      cover: abs(img?.attr("data-src") || img?.attr("data-original") || img?.attr("src")),
-      description: text(doc.querySelector(".post-body")?.text()),
-      author: text(doc.querySelector(".fn")?.text() || doc.querySelector(".post-author")?.text()),
-      status: text(doc.querySelector(".status")?.text()) || undefined
+      title: text(titleEl && titleEl.text()) || url,
+      cover: imageUrl(img),
+      description: text(body && body.text()),
+      author: text(authorEl && authorEl.text()),
+      status: text(statusEl && statusEl.text())
     };
   },
 
   async chapters(id) {
     const url = /^https?:\/\//i.test(id) ? id : abs(id);
-    const html = await getRaw(url);
-    const doc = harbor.parseHtml(html);
-    const seriesTitle = text(doc.querySelector("h1.post-title")?.text() || doc.querySelector("h2.post-title")?.text() || doc.querySelector("h1")?.text());
-    let links = extractLinks(html);
+    const doc = await getDoc(url);
+    const titleEl = doc.querySelector("h1.post-title") || doc.querySelector("h2.post-title") || doc.querySelector(".post-title") || doc.querySelector("h1");
+    const seriesTitle = text(titleEl && titleEl.text());
+    const result = [];
+    const seen = new Set();
 
-    let candidates = links.filter(x => /\.html(?:[?#]|$)/i.test(x.href) && (/(?:العدد|chapter|ch)\s*#?\s*\d+/i.test(x.label) || /#\s*\d+/.test(x.label)));
-
-    if (!candidates.length && seriesTitle) {
-      const searchHtml = await getRaw("/search?q=" + encodeURIComponent(seriesTitle) + "&max-results=150");
-      candidates = extractLinks(searchHtml).filter(x => /\.html(?:[?#]|$)/i.test(x.href) && (x.label.toLowerCase().includes(seriesTitle.toLowerCase()) || /(?:العدد|chapter|ch)\s*#?\s*\d+/i.test(x.label) || /#\s*\d+/.test(x.label)));
+    // Direct issue links, when present.
+    for (const a of doc.querySelectorAll("a[href]")) {
+      const label = text(a.attr("title")) || text(a.text());
+      const href = abs(a.attr("href"));
+      if (!href || href.indexOf("arcomixverse.blogspot.com") < 0 || !/\.html(?:[?#]|$)/i.test(href)) continue;
+      if (!isChapterTitle(label)) continue;
+      if (seen.has(href)) continue;
+      seen.add(href);
+      result.push({ id: href, chapter: chapterNumber(label), title: label, volume: null, pages: 0, language: "ar" });
     }
 
-    const seen = new Set();
-    const chapters = candidates.filter(x => {
-      if (seen.has(x.href)) return false;
-      seen.add(x.href);
-      return true;
-    }).map((x, i) => ({
-      id: x.href,
-      chapter: chapterNumber(x.label),
-      title: x.label || ("Chapter " + (i + 1)),
-      volume: null,
-      pages: 0,
-      language: "ar"
-    }));
+    // Issues are separate Blogger posts. Walk search pages so middle issues are included.
+    if (seriesTitle) {
+      for (let page = 0; page < 10; page++) {
+        const start = page * PAGE_SIZE;
+        let sdoc;
+        try {
+          sdoc = await getDoc("/search?q=" + encodeURIComponent(seriesTitle) + "&max-results=" + PAGE_SIZE + "&start=" + start);
+        } catch (_) {
+          break;
+        }
+        const items = postItems(sdoc);
+        if (!items.length) break;
+        let added = 0;
+        for (const item of items) {
+          const p = getPost(item);
+          if (!p || !isChapterTitle(p.title)) continue;
+          if (p.title.toLowerCase().indexOf(seriesTitle.toLowerCase()) < 0) continue;
+          if (seen.has(p.id)) continue;
+          seen.add(p.id);
+          result.push({ id: p.id, chapter: chapterNumber(p.title), title: p.title, volume: null, pages: 0, language: "ar" });
+          added++;
+        }
+        if (items.length < PAGE_SIZE || added === 0) break;
+      }
+    }
 
-    chapters.sort((a, b) => {
-      const na = parseFloat(a.chapter), nb = parseFloat(b.chapter);
+    result.sort((a, b) => {
+      const na = parseFloat(a.chapter);
+      const nb = parseFloat(b.chapter);
       if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
-      return a.title.localeCompare(b.title, "ar");
+      return text(a.title).localeCompare(text(b.title), "ar");
     });
-    return chapters;
+    return result;
   },
 
   async pageUrls(chapterId) {
     const url = /^https?:\/\//i.test(chapterId) ? chapterId : abs(chapterId);
-    const html = await getRaw(url);
-
-    const iframes = extractIframes(html, url);
-    for (const iframe of iframes) {
-      try {
-        const res = await harbor.http(iframe, { responseType: "text" });
-        if (!res.ok) continue;
-        const images = extractImages(res.body || "", iframe);
-        if (images.length) return images;
-      } catch (_) {}
+    const doc = await getDoc(url);
+    const result = [];
+    const seen = new Set();
+    for (const selector of [".post-body img", ".entry-content img", ".post-content img", "article img"]) {
+      for (const img of doc.querySelectorAll(selector)) {
+        const u = imageUrl(img);
+        if (!u || seen.has(u) || /favicon|blogger_logo|avatar|profile/i.test(u)) continue;
+        seen.add(u);
+        result.push(u);
+      }
+      if (result.length) break;
     }
-
-    return extractImages(html, url);
+    return result;
   }
 };
 
