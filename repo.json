@@ -3,11 +3,10 @@
   "iconUrl": "https://3asq.online/favicon.ico",
   "baseUrl": "https://github.com/naif2211/NAIF/raw/refs/heads/main/",
   "plugins": [
-    {"id":"3asq","name":"العاشق","version":"1.0.2","lang":"ar","nsfw":false,"icon":"https://3asq.online/favicon.ico","entry":"3asq.plugin.js"},
+    {"id":"3asq","name":"العاشق","version":"1.0.3","lang":"ar","nsfw":false,"icon":"https://3asq.online/favicon.ico","entry":"3asq.plugin.js"},
     {"id":"onma","name":"مانجا اون لاين","version":"1.0.0","lang":"ar","nsfw":false,"icon":"https://onma.me/favicon.ico","entry":"onma.plugin.js"},
-    {"id":"azora","name":"Azora Manga","version":"1.0.0","lang":"ar","nsfw":false,"icon":"https://azorafly.com/favicon.ico","entry":"azora.plugin.js"},
-    {"id":"mangalik","name":"مانجا ليك","version":"1.0.8","lang":"ar","nsfw":false,"icon":"https://mangalik.net/favicon.ico","entry":"mangalik.plugin.js"},
-    {"id":"stellarsaber","name":"StellarSaber","version":"1.0.2","lang":"ar","nsfw":false,"icon":"https://stellarsaber.pro/favicon.ico","entry":"stellarsaber.plugin.js"},
-    {"id":"arcomixverse","name":"Arco Mixverse","version":"1.0.1","lang":"ar","nsfw":false,"icon":"https://arcomixverse.blogspot.com/favicon.ico","entry":"arcomixverse.plugin.js"}
+    {"id":"azora","name":"Azora Manga","version":"1.0.1","lang":"ar","nsfw":false,"icon":"https://azorafly.com/favicon.ico","entry":"azora.plugin.js"},
+    {"id":"mangalik","name":"مانجا ليك","version":"1.0.9","lang":"ar","nsfw":false,"icon":"https://mangalik.net/favicon.ico","entry":"mangalik.plugin.js"},
+    {"id":"stellarsaber","name":"StellarSaber","version":"1.0.2","lang":"ar","nsfw":false,"icon":"https://stellarsaber.pro/favicon.ico","entry":"stellarsaber.plugin.js"}
   ]
 }
