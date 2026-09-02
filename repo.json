@@ -7,6 +7,7 @@
     {"id":"onma","name":"مانجا اون لاين","version":"1.0.0","lang":"ar","nsfw":false,"icon":"https://onma.me/favicon.ico","entry":"onma.plugin.js"},
     {"id":"azora","name":"Azora Manga","version":"1.0.0","lang":"ar","nsfw":false,"icon":"https://azorafly.com/favicon.ico","entry":"azora.plugin.js"},
     {"id":"mangalik","name":"مانجا ليك","version":"1.0.8","lang":"ar","nsfw":false,"icon":"https://mangalik.net/favicon.ico","entry":"mangalik.plugin.js"},
-    {"id":"stellarsaber","name":"StellarSaber","version":"1.0.2","lang":"ar","nsfw":false,"icon":"https://stellarsaber.pro/favicon.ico","entry":"stellarsaber.plugin.js"}
+    {"id":"stellarsaber","name":"StellarSaber","version":"1.0.2","lang":"ar","nsfw":false,"icon":"https://stellarsaber.pro/favicon.ico","entry":"stellarsaber.plugin.js"},
+    {"id":"arcomixverse","name":"Arco Mixverse","version":"1.0.0","lang":"ar","nsfw":false,"icon":"https://arcomixverse.blogspot.com/favicon.ico","entry":"arcomixverse.plugin.js"}
   ]
 }
