@@ -1,5 +1,7 @@
 {
   "name": "NAIF Manga Repo",
+  "iconUrl": "https://3asq.online/favicon.ico",
+  "baseUrl": "https://raw.githubusercontent.com/naif2211/NAIF/main/",
   "plugins": [
     {
       "id": "3asq",
