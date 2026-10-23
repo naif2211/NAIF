@@ -174,57 +174,107 @@ async function chapterList(id) {
   const mangaPath = "/manga/" + encodeURIComponent(id) + "/";
   const collected = [];
   const seen = new Set();
+  const visited = new Set();
+
   function merge(items) {
+    let added = 0;
     for (const item of items) {
       if (!item || !item.id || seen.has(item.id)) continue;
       seen.add(item.id);
       collected.push(item);
+      added++;
+    }
+    return added;
+  }
+
+  async function readPage(path) {
+    if (visited.has(path)) return 0;
+    visited.add(path);
+    try {
+      const doc = await getDoc(path);
+      return merge(chaptersFromDoc(doc));
+    } catch (_) {
+      return 0;
     }
   }
 
-  let doc = null;
+  // Read the default chapter list and the explicit list-style view.
+  await readPage(mangaPath);
+  await readPage(mangaPath + CHAPTER_SUFFIX);
+
+  // Some 3asq pages paginate the chapter list. Follow only pagination links
+  // that point back to this manga, instead of waiting on several blind AJAX calls.
+  const candidatePaths = [];
   try {
-    doc = await getDoc(mangaPath + CHAPTER_SUFFIX);
-    merge(chaptersFromDoc(doc));
-  } catch (_) {
-    try { doc = await getDoc(mangaPath); merge(chaptersFromDoc(doc)); } catch (_) {}
+    const doc = await getDoc(mangaPath + CHAPTER_SUFFIX);
+    for (const a of doc.querySelectorAll("a[href]")) {
+      const href = a.attr("href") || "";
+      if (!href || !/\/manga\//i.test(href)) continue;
+      const absHref = abs(href);
+      if (!absHref || absHref.indexOf(BASE + mangaPath) !== 0) continue;
+      if (!/(?:[?&](?:page|paged|chapter_page)=\d+|\/page\/\d+\/?)/i.test(absHref)) continue;
+      candidatePaths.push(absHref.replace(BASE, ""));
+    }
+  } catch (_) {}
+
+  // Also try common list pagination forms. Stop after consecutive pages add no chapters.
+  for (const path of candidatePaths) await readPage(path);
+  let empty = 0;
+  for (let page = 2; page <= 30; page++) {
+    const paths = [
+      mangaPath + CHAPTER_SUFFIX + "&page=" + page,
+      mangaPath + CHAPTER_SUFFIX + "&paged=" + page,
+      mangaPath + "page/" + page + "/" + CHAPTER_SUFFIX
+    ];
+    let added = 0;
+    for (const path of paths) {
+      if (visited.has(path)) continue;
+      const countBefore = collected.length;
+      await readPage(path);
+      added += collected.length - countBefore;
+      if (added) break;
+    }
+    if (added) empty = 0;
+    else empty++;
+    if (page >= 3 && empty >= 2) break;
   }
 
-  // Do not return early just because the page contains a first/latest chapter.
-  // The site's theme may render only a partial list in the initial HTML and load
-  // the complete numbered list from its AJAX endpoint.
-  const pid = doc ? postId(doc) : null;
-  if (pid) {
+  // AJAX is a last resort; use short timeouts so Harbor does not spin forever.
+  if (!collected.length) {
+    let doc = null;
+    try { doc = await getDoc(mangaPath); } catch (_) {}
+    const pid = doc ? postId(doc) : null;
+    if (pid) {
+      try {
+        const res = await harbor.http(BASE + "/wp-admin/admin-ajax.php", {
+          method: "POST",
+          responseType: "text",
+          timeoutMs: 8000,
+          headers: {
+            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "x-requested-with": "XMLHttpRequest",
+            Referer: BASE + mangaPath
+          },
+          body: formEncode({ action: "manga_get_chapters", manga: pid })
+        });
+        if (res.ok) merge(chaptersFromDoc(await harbor.parseHtml(res.body || "")));
+      } catch (_) {}
+    }
     try {
-      const res = await harbor.http(BASE + "/wp-admin/admin-ajax.php", {
+      const res = await harbor.http(BASE + mangaPath.replace(/\/$/, "") + "/ajax/chapters/", {
         method: "POST",
         responseType: "text",
-        timeoutMs: 30000,
+        timeoutMs: 8000,
         headers: {
           "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
           "x-requested-with": "XMLHttpRequest",
           Referer: BASE + mangaPath
         },
-        body: formEncode({ action: "manga_get_chapters", manga: pid })
+        body: ""
       });
       if (res.ok) merge(chaptersFromDoc(await harbor.parseHtml(res.body || "")));
     } catch (_) {}
   }
-
-  try {
-    const res = await harbor.http(BASE + mangaPath.replace(/\/$/, "") + "/ajax/chapters/", {
-      method: "POST",
-      responseType: "text",
-      timeoutMs: 30000,
-      headers: {
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "x-requested-with": "XMLHttpRequest",
-        Referer: BASE + mangaPath
-      },
-      body: ""
-    });
-    if (res.ok) merge(chaptersFromDoc(await harbor.parseHtml(res.body || "")));
-  } catch (_) {}
 
   collected.sort((a, b) => {
     const an = Number(String(a.chapter || "").replace(/[^0-9.]/g, ""));
