@@ -132,6 +132,8 @@ function chaptersFromDoc(doc) {
   const seen = new Set();
 
   const selectors = [
+    ".listing-chapters_wrap ul.main li.wp-manga-chapter a",
+    ".listing-chapters_wrap li.wp-manga-chapter a",
     "li.wp-manga-chapter a",
     ".version-chap li.wp-manga-chapter a",
     ".main.version-chap li a",
@@ -170,12 +172,28 @@ function formEncode(obj) {
 
 async function chapterList(id) {
   const mangaPath = "/manga/" + encodeURIComponent(id) + "/";
-  let doc = await getDoc(mangaPath + CHAPTER_SUFFIX);
-  let list = chaptersFromDoc(doc);
-  if (list.length) return list;
+  const collected = [];
+  const seen = new Set();
+  function merge(items) {
+    for (const item of items) {
+      if (!item || !item.id || seen.has(item.id)) continue;
+      seen.add(item.id);
+      collected.push(item);
+    }
+  }
 
-  // Madara fallback: chapters may be loaded by AJAX.
-  const pid = postId(doc);
+  let doc = null;
+  try {
+    doc = await getDoc(mangaPath + CHAPTER_SUFFIX);
+    merge(chaptersFromDoc(doc));
+  } catch (_) {
+    try { doc = await getDoc(mangaPath); merge(chaptersFromDoc(doc)); } catch (_) {}
+  }
+
+  // Do not return early just because the page contains a first/latest chapter.
+  // The site's theme may render only a partial list in the initial HTML and load
+  // the complete numbered list from its AJAX endpoint.
+  const pid = doc ? postId(doc) : null;
   if (pid) {
     try {
       const res = await harbor.http(BASE + "/wp-admin/admin-ajax.php", {
@@ -189,10 +207,7 @@ async function chapterList(id) {
         },
         body: formEncode({ action: "manga_get_chapters", manga: pid })
       });
-      if (res.ok) {
-        list = chaptersFromDoc(await harbor.parseHtml(res.body || ""));
-        if (list.length) return list;
-      }
+      if (res.ok) merge(chaptersFromDoc(await harbor.parseHtml(res.body || "")));
     } catch (_) {}
   }
 
@@ -208,13 +223,16 @@ async function chapterList(id) {
       },
       body: ""
     });
-    if (res.ok) {
-      list = chaptersFromDoc(await harbor.parseHtml(res.body || ""));
-      if (list.length) return list;
-    }
+    if (res.ok) merge(chaptersFromDoc(await harbor.parseHtml(res.body || "")));
   } catch (_) {}
 
-  return [];
+  collected.sort((a, b) => {
+    const an = Number(String(a.chapter || "").replace(/[^0-9.]/g, ""));
+    const bn = Number(String(b.chapter || "").replace(/[^0-9.]/g, ""));
+    if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
+    return 0;
+  });
+  return collected;
 }
 
 const plugin = {
@@ -242,7 +260,13 @@ const plugin = {
       id,
       title: clean(root.querySelector("div.post-title h1")?.text()) || clean(root.querySelector("h1")?.text()) || id,
       altTitle: firstText(root, [".alternative", ".post-content_item.manga_alternative .summary-content"]),
-      cover: abs(firstAttr(root, [".summary_image", ".profile-manga", ".tab-summary .summary_image"], ["data-src", "data-lazy-src", "data-original", "src"])),
+      cover: abs(
+        firstAttr(root, [
+          ".summary_image img", ".profile-manga img", ".tab-summary .summary_image img",
+          ".summary_image", ".profile-manga", ".tab-summary .summary_image"
+        ], ["data-src", "data-lazy-src", "data-original", "src", "data-cfsrc"])
+        || root.querySelector("meta[property='og:image']")?.attr("content")
+      ),
       author: firstText(root, [".author-content", ".post-content_item.manga-authors .summary-content", ".post-content_item.manga-author .summary-content"]),
       status: firstText(root, [".post-content_item.manga-status .summary-content", ".post-content_item.manga_status .summary-content"]),
       description: firstText(root, [".summary__content", ".description-summary .summary__content", ".description-summary"]),
