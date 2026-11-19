@@ -1,6 +1,7 @@
 // MangaLik source for Harbor
+// Repaired search, catalog parsing, chapter filtering, and reader image extraction.
 const BASE = "https://mangalik.net";
-const PAGE_SIZE = 48;
+const PAGE_SIZE = 24;
 
 async function getDoc(path) {
   const res = await harbor.http(BASE + path, { responseType: "text" });
@@ -10,59 +11,103 @@ async function getDoc(path) {
 
 function abs(url) {
   if (!url) return undefined;
-  if (/^https?:\/\//i.test(url)) return url;
-  if (url.startsWith("//")) return "https:" + url;
-  if (url.startsWith("/")) return BASE + url;
-  return BASE + "/" + url;
+  const value = String(url).trim();
+  if (!value || value.startsWith("data:") || value.startsWith("blob:")) return undefined;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith("//")) return "https:" + value;
+  if (value.startsWith("/")) return BASE + value;
+  return BASE + "/" + value;
+}
+
+function text(v) {
+  return v ? String(v).replace(/\s+/g, " ").trim() : "";
 }
 
 function mangaId(href) {
   const u = abs(href) || "";
   const p = u.replace(/^https?:\/\/[^/]+/i, "");
-  const m = p.match(/^\/manga\/([^/?#]+)\/?$/i);
+  const m = p.match(/^\/manga\/([^/?#]+)\/?(?:[?#].*)?$/i);
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-function text(v) { return v ? String(v).replace(/\s+/g, " ").trim() : ""; }
-
-function card(el) {
-  const a = el.querySelector("a[href*='/manga/']") || el.querySelector("a");
-  if (!a) return null;
-  const id = mangaId(a.attr("href") || "");
-  if (!id) return null;
+function imageFrom(el) {
+  if (!el) return undefined;
   const img = el.querySelector("img");
-  return {
-    id,
-    title: text(a.attr("title")) || text(el.querySelector(".post-title")?.text()) || text(el.querySelector("h2")?.text()) || text(el.querySelector("h3")?.text()) || text(a.text()) || id,
-    cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("data-original") || img?.attr("src"))
-  };
+  if (!img) return undefined;
+  return abs(img.attr("data-src") || img.attr("data-lazy-src") ||
+    img.attr("data-original") || img.attr("data-cfsrc") || img.attr("src"));
+}
+
+function titleFrom(el, a, id) {
+  return text(a?.attr("title")) ||
+    text(el.querySelector(".post-title")?.text()) ||
+    text(el.querySelector(".manga-title")?.text()) ||
+    text(el.querySelector(".tt")?.text()) ||
+    text(el.querySelector("h2")?.text()) ||
+    text(el.querySelector("h3")?.text()) ||
+    text(a?.text()) || id;
 }
 
 function cards(doc) {
   const result = [];
   const seen = new Set();
-  for (const a of doc.querySelectorAll("a[href]")) {
+  const containers = doc.querySelectorAll(
+    ".c-tabs-item, .page-item-detail, .manga, .bs, .item, article, .post"
+  );
+
+  function addAnchor(a, container) {
     const id = mangaId(a.attr("href") || "");
-    if (!id || seen.has(id)) continue;
-    const x = card(a) || { id, title: text(a.attr("title")) || text(a.text()) || id, cover: undefined };
+    if (!id || seen.has(id)) return;
+    const root = container || a;
+    result.push({
+      id,
+      title: titleFrom(root, a, id),
+      cover: imageFrom(root) || imageFrom(a)
+    });
     seen.add(id);
-    result.push(x);
+  }
+
+  for (const container of containers) {
+    for (const a of container.querySelectorAll("a[href]")) {
+      addAnchor(a, container);
+    }
+  }
+
+  // Fallback for themes whose manga cards do not use the common containers.
+  for (const a of doc.querySelectorAll("a[href*='/manga/']")) {
+    addAnchor(a, null);
   }
   return result;
 }
 
-function chapter(a) {
-  const href = a.attr("href") || "";
-  const u = abs(href) || "";
-  const p = u.replace(/^https?:\/\/[^/]+/i, "");
-  if (!/^\/manga\/[^/?#]+\/[^/?#]+\/?$/i.test(p)) return null;
-  const m = p.match(/^\/manga\/([^/?#]+)\/([^/?#]+)\/?$/i);
-  if (!m) return null;
-  const label = text(a.text()) || text(a.attr("title")) || m[2];
-  const number = (label.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) || [])[1]
-    || (m[2].match(/([0-9]+(?:\.[0-9]+)?)/) || [])[1]
-    || m[2];
-  return { id: u, chapter: number, title: label || "Chapter " + number, volume: null, pages: 0, language: "ar" };
+function chapterFromAnchor(a, seriesId) {
+  const u = abs(a.attr("href") || "");
+  if (!u) return null;
+  const p = u.replace(/^https?:\/\/[^/]+/i, "").split(/[?#]/)[0];
+  const m = p.match(/^\/manga\/([^/]+)\/([^/]+)\/?$/i);
+  if (!m || decodeURIComponent(m[1]) !== seriesId) return null;
+
+  const slug = decodeURIComponent(m[2]);
+  const label = text(a.text()) || text(a.attr("title")) || slug;
+  const numberMatch =
+    label.match(/(?:chapter|ch\.?|الفصل|فصل)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) ||
+    slug.match(/(?:chapter|ch)[-\s_]*([0-9]+(?:\.[0-9]+)?)/i) ||
+    slug.match(/([0-9]+(?:\.[0-9]+)?)/);
+  const number = numberMatch ? numberMatch[1] : slug;
+  return {
+    id: u,
+    chapter: number,
+    title: label || "Chapter " + number,
+    volume: null,
+    pages: 0,
+    language: "ar"
+  };
+}
+
+function pageImageUrl(img) {
+  return abs(img.attr("data-src") || img.attr("data-lazy-src") ||
+    img.attr("data-original") || img.attr("data-cfsrc") ||
+    img.attr("data-url") || img.attr("src"));
 }
 
 const plugin = {
@@ -70,55 +115,60 @@ const plugin = {
   name: "مانجا ليك",
 
   async popular(offset) {
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const paths = page === 1 ? ["/latest/", "/"] : ["/latest/page/" + page + "/", "/page/" + page + "/"];
+    const page = Math.floor((Number(offset) || 0) / PAGE_SIZE) + 1;
+    const paths = page === 1
+      ? ["/manga/", "/", "/latest/"]
+      : ["/manga/page/" + page + "/", "/page/" + page + "/", "/latest/page/" + page + "/"];
+
     for (const path of paths) {
       try {
-        const result = cards(await getDoc(path));
-        if (result.length) return result;
+        const items = cards(await getDoc(path));
+        if (items.length) return items;
       } catch (_) {}
     }
     return [];
   },
 
   async search(query, offset) {
-    const value = text(query).toLowerCase();
-    if (!value) return [];
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const paths = page === 1 ? ["/latest/", "/"] : ["/latest/page/" + page + "/", "/page/" + page + "/"];
-    const result = [];
-    const seen = new Set();
+    const q = text(query);
+    if (!q) return [];
+    const page = Math.floor((Number(offset) || 0) / PAGE_SIZE) + 1;
+    const encoded = encodeURIComponent(q);
+    const suffix = page > 1 ? "&paged=" + page : "";
+    const paths = [
+      "/?s=" + encoded + "&post_type=wp-manga" + suffix,
+      "/manga/?s=" + encoded + "&post_type=wp-manga" + suffix,
+      "/?s=" + encoded + (page > 1 ? "&paged=" + page : "")
+    ];
 
-    // Search through the same server-rendered catalog used by the working listing.
-    // This avoids relying on MangaLik's search endpoint, which may return a page
-    // that Harbor cannot parse consistently.
     for (const path of paths) {
       try {
         const items = cards(await getDoc(path));
-        for (const item of items) {
-          const hay = (item.title + " " + item.id).toLowerCase();
-          if (hay.includes(value) && !seen.has(item.id)) {
-            seen.add(item.id);
-            result.push(item);
-          }
-        }
-        if (result.length) return result;
+        if (items.length) return items;
       } catch (_) {}
     }
-    return result;
+    return [];
   },
 
   async detail(id) {
     const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
     const root = doc.querySelector(".profile-manga") || doc;
-    const img = root.querySelector(".summary_image img") || root.querySelector("img");
+    const img = root.querySelector(".summary_image img") ||
+      root.querySelector(".summary_image")?.querySelector("img") ||
+      root.querySelector("img");
+    const og = doc.querySelector("meta[property='og:image']");
     return {
       id,
       title: text(doc.querySelector("h1")?.text()) || id,
-      cover: abs(img?.attr("data-src") || img?.attr("data-lazy-src") || img?.attr("src")),
-      description: text(doc.querySelector(".description-summary")?.text()) || text(doc.querySelector(".summary__content")?.text()),
-      status: text(doc.querySelector(".manga-status .summary-content")?.text()),
-      author: text(doc.querySelector(".manga-authors .summary-content")?.text()) || text(doc.querySelector(".author-content")?.text())
+      cover: imageFrom(root) || abs(img?.attr("data-src") || img?.attr("data-lazy-src") ||
+        img?.attr("data-original") || img?.attr("src") || og?.attr("content")),
+      description: text(doc.querySelector(".description-summary")?.text()) ||
+        text(doc.querySelector(".summary__content")?.text()) ||
+        text(doc.querySelector(".description")?.text()),
+      status: text(doc.querySelector(".manga-status .summary-content")?.text()) ||
+        text(doc.querySelector(".post-status .summary-content")?.text()),
+      author: text(doc.querySelector(".manga-authors .summary-content")?.text()) ||
+        text(doc.querySelector(".author-content")?.text())
     };
   },
 
@@ -127,11 +177,15 @@ const plugin = {
     const result = [];
     const seen = new Set();
     for (const a of doc.querySelectorAll("a[href]")) {
-      const c = chapter(a);
-      if (c && !seen.has(c.id)) { seen.add(c.id); result.push(c); }
+      const c = chapterFromAnchor(a, id);
+      if (c && !seen.has(c.id)) {
+        seen.add(c.id);
+        result.push(c);
+      }
     }
     result.sort((a, b) => {
-      const x = parseFloat(a.chapter), y = parseFloat(b.chapter);
+      const x = parseFloat(a.chapter);
+      const y = parseFloat(b.chapter);
       if (Number.isNaN(x) || Number.isNaN(y)) return 0;
       return y - x;
     });
@@ -146,10 +200,21 @@ const plugin = {
     const doc = harbor.parseHtml(res.body);
     const result = [];
     const seen = new Set();
-    for (const selector of [".reading-content img", ".wp-manga-chapter-img", ".page-break img", ".entry-content img"]) {
+    const selectors = [
+      ".reading-content img",
+      ".wp-manga-chapter-img",
+      ".page-break img",
+      ".chapter-content img",
+      ".reader-area img",
+      ".entry-content img"
+    ];
+    for (const selector of selectors) {
       for (const img of doc.querySelectorAll(selector)) {
-        const url = abs(img.attr("data-src") || img.attr("data-lazy-src") || img.attr("data-original") || img.attr("src"));
-        if (url && !seen.has(url)) { seen.add(url); result.push(url); }
+        const url = pageImageUrl(img);
+        if (url && !seen.has(url)) {
+          seen.add(url);
+          result.push(url);
+        }
       }
       if (result.length) break;
     }
