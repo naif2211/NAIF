@@ -1,7 +1,7 @@
 // MangaLik source for Harbor
 // Fix duplicate manga cards/covers and load Madara chapter lists (including AJAX).
 const BASE = "https://mangalik.net";
-const PAGE_SIZE = 48;
+const PAGE_SIZE = 10;
 const CHAPTER_SUFFIX = "?style=list";
 
 function clean(v) {
@@ -68,12 +68,18 @@ function cardFromContainer(el) {
 function cards(doc) {
   const out = [];
   const seen = new Set();
+  // Collect from every known card layout. Do not stop at the first selector:
+  // some listing pages mix card types and that caused only a small subset
+  // (often seven entries) to be returned.
   const selectors = [
     ".c-tabs-item__content",
     ".page-item-detail",
     ".manga__item",
     ".manga-item",
     ".bs",
+    ".bsx",
+    ".listupd .item",
+    ".listupd article",
     "article",
     ".item"
   ];
@@ -85,9 +91,8 @@ function cards(doc) {
         out.push(item);
       }
     }
-    if (out.length) return out;
   }
-  // Fallback: only use the image nested in each individual manga link.
+  // Fallback / catch cards missed by theme-specific containers.
   for (const a of doc.querySelectorAll("a[href*='/manga/']")) {
     const id = mangaId(a.attr("href") || "");
     if (!id || seen.has(id)) continue;
@@ -222,11 +227,11 @@ const plugin = {
 
   async popular(offset, tagId) {
     const page = Math.floor((Number(offset) || 0) / PAGE_SIZE) + 1;
-    let path = "/manga/?m_orderby=views&page=" + page;
+    let path = "/manga/page/" + page + "/?m_orderby=views";
     if (tagId) path += "&genre=" + encodeURIComponent(tagId);
     const items = cards(await getDoc(path));
     if (items.length) return items;
-    return cards(await getDoc(page === 1 ? "/" : "/page/" + page + "/"));
+    return cards(await getDoc(page === 1 ? "/manga/" : "/manga/page/" + page + "/"));
   },
 
   async search(query, offset, tagId) {
