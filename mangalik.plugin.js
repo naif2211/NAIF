@@ -158,12 +158,24 @@ function chaptersFromDoc(doc, seriesId) {
   return out;
 }
 function postId(doc) {
-  for (const el of doc.querySelectorAll("[data-id]")) {
-    const id = el.attr("data-id");
-    if (id && (el.attr("id") || "").includes("manga-chapters-holder")) return id;
+  // Match the ID discovery used by the established MangaLek Madara source.
+  const selectors = [
+    "#manga-chapters-holder[data-id]",
+    "[id^='manga-chapters-holder'][data-id]",
+    "input.rating-post-id",
+    "a[data-post]",
+    "link[rel='shortlink']"
+  ];
+  for (const selector of selectors) {
+    const el = doc.querySelector(selector);
+    if (!el) continue;
+    let value = el.attr("data-id") || el.attr("value") || el.attr("data-post") || el.attr("href");
+    if (!value) continue;
+    const shortlink = String(value).match(/[?&]p=(\d+)/);
+    if (shortlink) value = shortlink[1];
+    if (/^\d+$/.test(String(value))) return String(value);
   }
-  const holder = doc.querySelector("#manga-chapters-holder");
-  return holder?.attr("data-id") || null;
+  return null;
 }
 function formEncode(obj) {
   return Object.keys(obj).filter(k => obj[k] !== undefined && obj[k] !== null)
@@ -171,7 +183,7 @@ function formEncode(obj) {
 }
 async function chapterList(id) {
   const mangaPath = "/manga/" + encodeURIComponent(id) + "/";
-  let doc = await getDoc(mangaPath + CHAPTER_SUFFIX);
+  let doc = await getDoc(mangaPath);
   let list = chaptersFromDoc(doc, id);
   if (list.length) return list;
 
@@ -248,7 +260,7 @@ const plugin = {
   },
 
   async detail(id) {
-    const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/" + CHAPTER_SUFFIX);
+    const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
     const root = doc.querySelector(".site-content") || doc;
     const cover = firstAttr(root, [
       ".tab-summary .summary_image img",
