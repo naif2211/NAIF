@@ -109,47 +109,60 @@ function chapterNumber(label, slug) {
   if (!m) m = String(slug || "").match(/([0-9]+(?:\.[0-9]+)?)/);
   return m ? m[1] : (slug || "");
 }
-function chapterFromLink(a, seriesId) {
+function chapterFromElement(item) {
+  const a = item.querySelector("a[href]");
+  if (!a) return null;
   const href = a.attr("href") || "";
-  let u = abs(href);
-  if (!u) return null;
-  const p = u.replace(/^https?:\/\/[^/]+/i, "").split(/[?#]/)[0];
-  const m = p.match(/^\/manga\/([^/]+)\/([^/]+)\/?$/i);
-  if (!m || decodeURIComponent(m[1]) !== seriesId) return null;
-  const slug = decodeURIComponent(m[2]);
+  const url = abs(href);
+  if (!url) return null;
+
+  // Madara's own parser keeps the final URL segment as the chapter key.
+  // Do not require the chapter URL to repeat the manga slug: some MangaLik
+  // series use alternate paths and the old check discarded valid chapters.
+  const path = url.replace(/^https?:\/\/[^/]+/i, "").split(/[?#]/)[0];
+  const slug = decodeURIComponent(path.replace(/\/$/, "").split("/").pop() || "");
+  if (!slug) return null;
+
   const label = clean(a.text()) || clean(a.attr("title")) || slug;
   const number = a.attr("data-number") || chapterNumber(label, slug);
   if (!number) return null;
+
   return {
-    id: u,
+    id: url,
     chapter: number,
-    title: label || "Chapter " + number,
+    title: label || "الفصل " + number,
     volume: null,
     pages: 0,
     language: "ar"
   };
 }
-function chaptersFromDoc(doc, seriesId) {
+
+function chaptersFromDoc(doc) {
   const out = [];
   const seen = new Set();
-  const selectors = [
-    "li.wp-manga-chapter a",
-    ".version-chap li.wp-manga-chapter a",
-    ".main.version-chap li a",
-    "div.wp-manga-chapter a",
-    ".wp-manga-chapter a",
-    "a[href*='/manga/'][href*='chapter']"
-  ];
-  for (const sel of selectors) {
-    for (const a of doc.querySelectorAll(sel)) {
-      const c = chapterFromLink(a, seriesId);
-      if (c && !seen.has(c.id)) {
-        seen.add(c.id);
-        out.push(c);
+
+  // The official Madara implementation parses each li.wp-manga-chapter,
+  // then reads its first anchor. Keep the response scoped to this manga
+  // instead of filtering by an assumed URL layout.
+  for (const item of doc.querySelectorAll("li.wp-manga-chapter, .wp-manga-chapter")) {
+    const chapter = chapterFromElement(item);
+    if (chapter && !seen.has(chapter.id)) {
+      seen.add(chapter.id);
+      out.push(chapter);
+    }
+  }
+
+  // Some themes return the same list without li wrappers.
+  if (!out.length) {
+    for (const a of doc.querySelectorAll(".listing-chapters_wrap a[href], .version-chap a[href]")) {
+      const chapter = chapterFromElement({ querySelector: (selector) => selector === "a[href]" ? a : null });
+      if (chapter && !seen.has(chapter.id)) {
+        seen.add(chapter.id);
+        out.push(chapter);
       }
     }
-    if (out.length) break;
   }
+
   out.sort((a, b) => {
     const x = parseFloat(a.chapter), y = parseFloat(b.chapter);
     if (Number.isNaN(x) || Number.isNaN(y)) return 0;
@@ -160,8 +173,7 @@ function chaptersFromDoc(doc, seriesId) {
 function postId(doc) {
   // Match the ID discovery used by the established MangaLek Madara source.
   const selectors = [
-    "#manga-chapters-holder[data-id]",
-    "[id^='manga-chapters-holder'][data-id]",
+    "[id^='manga-chapters-holder']",
     "input.rating-post-id",
     "a[data-post]",
     "link[rel='shortlink']"
@@ -184,7 +196,7 @@ function formEncode(obj) {
 async function chapterList(id) {
   const mangaPath = "/manga/" + encodeURIComponent(id) + "/";
   let doc = await getDoc(mangaPath);
-  let list = chaptersFromDoc(doc, id);
+  let list = chaptersFromDoc(doc);
   if (list.length) return list;
 
   // Madara-based MangaLik may populate the chapter list through admin-ajax.
@@ -203,7 +215,7 @@ async function chapterList(id) {
         body: formEncode({ action: "manga_get_chapters", manga: pid })
       });
       if (res.ok) {
-        list = chaptersFromDoc(await harbor.parseHtml(res.body || ""), id);
+        list = chaptersFromDoc(await harbor.parseHtml(res.body || ""));
         if (list.length) return list;
       }
     } catch (_) {}
@@ -221,7 +233,7 @@ async function chapterList(id) {
       body: ""
     });
     if (res.ok) {
-      list = chaptersFromDoc(await harbor.parseHtml(res.body || ""), id);
+      list = chaptersFromDoc(await harbor.parseHtml(res.body || ""));
       if (list.length) return list;
     }
   } catch (_) {}
