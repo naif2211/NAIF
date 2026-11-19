@@ -56,6 +56,15 @@
       "nsfw": false,
       "icon": "https://mangatime.org/favicon.ico",
       "entry": "mangatime.plugin.js"
+    },
+    {
+      "id": "areamanga",
+      "name": "أريا مانجا",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://ar.kenmanga.com/favicon.ico",
+      "entry": "areamanga.plugin.js"
     }
   ]
 }
