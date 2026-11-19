@@ -1,17 +1,8 @@
 {
   "name": "NAIF Manga Repo",
-  "iconUrl": "https://3asq.online/favicon.ico",
+  "iconUrl": "https://mangadar.com/favicon.ico",
   "baseUrl": "https://raw.githubusercontent.com/naif2211/NAIF/main/",
   "plugins": [
-    {
-      "id": "3asq",
-      "name": "العاشق",
-      "version": "1.0.5",
-      "lang": "ar",
-      "nsfw": false,
-      "icon": "https://3asq.online/favicon.ico",
-      "entry": "3asq.plugin.js"
-    },
     {
       "id": "onma",
       "name": "مانجا اون لاين",
@@ -20,15 +11,6 @@
       "nsfw": false,
       "icon": "https://onma.me/favicon.ico",
       "entry": "onma.plugin.js"
-    },
-    {
-      "id": "azora",
-      "name": "Azora Manga",
-      "version": "1.0.1",
-      "lang": "ar",
-      "nsfw": false,
-      "icon": "https://azorafly.com/favicon.ico",
-      "entry": "azora.plugin.js"
     },
     {
       "id": "mangalik",
