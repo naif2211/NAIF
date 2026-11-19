@@ -193,17 +193,40 @@ function formEncode(obj) {
   return Object.keys(obj).filter(k => obj[k] !== undefined && obj[k] !== null)
     .map(k => encodeURIComponent(k) + "=" + encodeURIComponent(String(obj[k]))).join("&");
 }
+
+function mangaAjaxConfig(doc) {
+  const scripts = [];
+  const known = doc.querySelector("#wp-manga-js-extra");
+  if (known) scripts.push(clean(known.text()));
+  for (const el of doc.querySelectorAll("script")) {
+    const value = clean(el.text());
+    if (value && /ajax_url|manga_id|manga_get_chapters/i.test(value)) scripts.push(value);
+  }
+  for (const source of scripts) {
+    const ajaxMatch = source.match(/["']?ajax_url["']?\\s*[:=]\\s*["']([^"'\\s]+)["']/i);
+    const idMatch = source.match(/["']?manga_id["']?\\s*[:=]\\s*["']?(\\d+)["']?/i) ||
+      source.match(/["']?post_id["']?\\s*[:=]\\s*["']?(\\d+)["']?/i);
+    if (ajaxMatch && idMatch) return { ajaxUrl: abs(ajaxMatch[1]), mangaId: idMatch[1] };
+  }
+  return null;
+}
+
 async function chapterList(id) {
   const mangaPath = "/manga/" + encodeURIComponent(id) + "/";
   let doc = await getDoc(mangaPath);
   let list = chaptersFromDoc(doc);
   if (list.length) return list;
 
-  // Madara-based MangaLik may populate the chapter list through admin-ajax.
-  const pid = postId(doc);
+  // Read the real AJAX URL and manga ID exposed by WP Manga/Madara.
+  // Many installs publish these in #wp-manga-js-extra rather than in a
+  // visible data-id attribute; without them the source can show only the
+  // reader's single "start reading" link.
+  const config = mangaAjaxConfig(doc);
+  const pid = postId(doc) || config?.mangaId;
+  const ajaxUrl = config?.ajaxUrl || (BASE + "/wp-admin/admin-ajax.php");
   if (pid) {
     try {
-      const res = await harbor.http(BASE + "/wp-admin/admin-ajax.php", {
+      const res = await harbor.http(ajaxUrl, {
         method: "POST",
         responseType: "text",
         timeoutMs: 30000,
