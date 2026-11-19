@@ -6,14 +6,14 @@ const PAGE_SIZE = 48;
 const API_LIMIT = 48;
 
 function clean(value) {
-  return value == null ? "" : String(value).replace(/\\s+/g, " ").trim();
+  return value == null ? "" : String(value).replace(/\s+/g, " ").trim();
 }
 
 function abs(url) {
   if (!url) return undefined;
   const value = String(url).trim();
   if (!value || value.startsWith("data:")) return undefined;
-  if (/^https?:\\/\\//i.test(value)) return value;
+  if (/^https?:\/\//i.test(value)) return value;
   if (value.startsWith("//")) return "https:" + value;
   if (value.startsWith("/")) return BASE + value;
   return BASE + "/" + value;
@@ -27,7 +27,7 @@ function parseSourceId(id) {
   const value = String(id || "");
   const hash = value.lastIndexOf("#");
   if (hash < 0) throw new Error("Invalid MangaTime manga ID");
-  const route = value.slice(0, hash).replace(/^\\/+|\\/+$/g, "");
+  const route = value.slice(0, hash).replace(/^\/+|\/+$/g, "");
   const parts = route.split("/");
   if (parts.length < 2 || !parts[1]) throw new Error("Invalid MangaTime manga route");
   return { type: parts[0], slug: parts.slice(1).join("/"), seriesId: value.slice(hash + 1) };
@@ -84,12 +84,12 @@ const plugin = {
   name: "MangaTime",
 
   async popular(offset) {
-    return searchSeries(offset, "popularity");
+    return searchSeries(offset, "recent");
   },
 
   async search(query, offset) {
     if (!clean(query)) return this.popular(offset);
-    return searchSeries(offset, "popularity", clean(query));
+    return searchSeries(offset, "recent", clean(query));
   },
 
   async detail(id) {
@@ -132,7 +132,7 @@ const plugin = {
   },
 
   async pageUrls(chapterId) {
-    const url = new URL(String(chapterId).replace(/^\\/+/, ""), BASE + "/");
+    const url = new URL(String(chapterId).replace(/^\/+/, ""), BASE + "/");
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts.length < 4 || parts[2] !== "chapter") {
       throw new Error("Invalid MangaTime chapter ID");
@@ -150,3 +150,6 @@ const plugin = {
     return pages.map(abs).filter(Boolean);
   }
 };
+
+
+return plugin;
