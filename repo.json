@@ -47,6 +47,15 @@
       "nsfw": false,
       "icon": "https://stellarsaber.pro/favicon.ico",
       "entry": "stellarsaber.plugin.js"
+    },
+    {
+      "id": "mangatime",
+      "name": "MangaTime",
+      "version": "1.0.0",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://mangatime.org/favicon.ico",
+      "entry": "mangatime.plugin.js"
     }
   ]
 }
