@@ -51,7 +51,7 @@
     {
       "id": "mangadar",
       "name": "MangaDar",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "lang": "ar",
       "nsfw": false,
       "icon": "https://mangadar.com/favicon.ico",
