@@ -81,22 +81,28 @@ function cards(doc) {
 }
 function chapterItems(doc, slug) {
   const out = [], seen = new Set();
-  for (const a of doc.querySelectorAll('a[href*="/manga/' + slug + '/"]')) {
-    const c = chapterFromHref(attr(a, ["href"]));
-    if (!c || c.slug !== slug || seen.has(c.url)) continue;
+  // Scan every anchor instead of relying on a slug-specific CSS selector:
+  // chapter lists may contain encoded slugs, nested markup, or alternate
+  // chapter URL formats, while the details page itself has a non-chapter link.
+  for (const a of doc.querySelectorAll("a[href]")) {
+    const href = attr(a, ["href"]);
+    const c = chapterFromHref(href);
+    if (!c || (slug && c.slug !== slug) || seen.has(c.url)) continue;
     const raw = clean(a.text() || attr(a, ["title","aria-label"]));
     const n = c.number;
-    const title = raw || ("الفصل " + n);
     seen.add(c.url);
     out.push({
       id: c.url,
       chapter: n,
-      title: title,
+      title: raw || ("الفصل " + n),
       volume: null,
       pages: 0,
       language: "ar"
     });
   }
+  // Deduplicate and sort numerically descending, even if the site markup is
+  // interleaved with other links or has duplicate chapter cards.
+  out.sort((a,b) => (parseFloat(b.chapter)||0) - (parseFloat(a.chapter)||0));
   return out;
 }
 function imageUrls(doc) {
