@@ -77,50 +77,28 @@ function parseChapterNumber(element, link) {
 function parseChapters(doc, mangaIdValue) {
   const results = [];
   const seen = new Set();
-  const slug = String(mangaIdValue || "").replace(/^.*\\/m, "").replace(/\\/$/, "");
-  function add(link, item) {
-    const href = link && link.attr("href");
-    const url = abs(href);
-    if (!url || seen.has(url)) return;
-    const number = parseChapterNumber(item || link, link);
-    // Fallback to the chapter URL slug when labels are icon-only or blank.
-    const path = (url || "").replace(/^https?:\\/\\/[^/]+/i, "").split(/[?#]/)[0];
-    const parts = path.split("/").filter(Boolean);
-    const slugNum = (parts[parts.length - 1] || "").match(/(?:chapter|ch|الفصل)?[-_ ]?(\\d+(?:\\.\\d+)?)/i);
-    const finalNumber = number || (slugNum && slugNum[1]);
-    if (!finalNumber) return;
+  for (const item of doc.querySelectorAll("#chapters-list-container .ch-item")) {
+    const link = item.querySelector("a[href]");
+    if (!link) continue;
+    const url = abs(link.attr("href"));
+    if (!url || seen.has(url)) continue;
+
+    const number = parseChapterNumber(item, link);
+    if (!number) continue;
+    const date = clean(item.querySelector(".chap-date")?.text());
     results.push({
       id: url,
-      chapter: finalNumber,
-      title: clean(link.text()) || "الفصل " + finalNumber,
+      chapter: number,
+      title: clean(link.text()) || "الفصل " + number,
       volume: null,
       pages: 0,
       language: "ar",
-      date: clean(item?.querySelector(".chap-date")?.text())
+      date
     });
     seen.add(url);
   }
-  // Primary current layout.
-  for (const item of doc.querySelectorAll("#chapters-list-container .ch-item")) {
-    const link = item.querySelector("a[href]");
-    if (link) add(link, item);
-  }
-  // Fallback: chapter links may be rendered outside .ch-item or the
-  // chapters container may have changed. Scan all anchors matching this manga.
-  if (!results.length) {
-    for (const link of doc.querySelectorAll("a[href]")) {
-      const href = abs(link.attr("href"));
-      if (!href) continue;
-      const path = href.replace(/^https?:\\/\\/[^/]+/i, "").split(/[?#]/)[0];
-      const match = path.match(/^\\/manga\\/([^/]+)\\/([^/]+)\\/?$/i);
-      if (!match || decodeURIComponent(match[1]) !== slug) continue;
-      add(link, link.parentElement || link);
-    }
-  }
-  results.sort((a, b) => (parseFloat(b.chapter) || 0) - (parseFloat(a.chapter) || 0));
   return results;
 }
-
 function encodeForm(values) {
   return Object.keys(values).map(key =>
     encodeURIComponent(key) + "=" + encodeURIComponent(String(values[key]))
