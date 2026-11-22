@@ -160,9 +160,15 @@ function pageImages(doc) {
   };
   // StellarSaber's current reader stores the real CDN image URL in data-cdn-url;
   // src is only a transparent placeholder and must never be returned.
+  const cdnPages = [];
   for (const image of doc.querySelectorAll(".reader__images img[data-cdn-url], img.reader__page[data-cdn-url]")) {
-    add(abs(image.attr("data-cdn-url")));
+    const url = abs(image.attr("data-cdn-url"));
+    if (!url) continue;
+    const page = Number(image.attr("data-page"));
+    cdnPages.push({ url, page: Number.isFinite(page) && page > 0 ? page : cdnPages.length + 1 });
   }
+  cdnPages.sort((a, b) => a.page - b.page);
+  for (const item of cdnPages) add(item.url);
   if (urls.length) return urls;
 
   const selectors = [
