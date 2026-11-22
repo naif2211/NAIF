@@ -252,7 +252,7 @@ const plugin = {
 
     const response = await request("/wp-admin/admin-ajax.php", {
       method: "POST",
-      responseType: "json",
+      responseType: "text",
       accept: "application/json, text/javascript, */*;q=0.01",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -261,7 +261,13 @@ const plugin = {
       body
     });
 
-    let items = mapSearchResults(response.body);
+    let payload = null;
+    if (typeof response.body === "string") {
+      try { payload = JSON.parse(response.body); } catch (_) {}
+    } else {
+      payload = response.body;
+    }
+    const items = mapSearchResults(payload);
     if (items.length) return items;
 
     // Some WordPress configurations return HTML instead of JSON.
