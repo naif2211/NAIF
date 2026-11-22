@@ -20,9 +20,32 @@ function abs(url) {
 
 async function getDoc(path) {
   const url = /^https?:\/\//i.test(path) ? path : BASE + path;
-  const res = await harbor.http(url, { responseType: "text", timeoutMs: 18000 });
-  if (!res.ok) throw new Error("http " + res.status + " for " + url);
-  return harbor.parseHtml(res.body || "");
+  const res = await harbor.http(url, {
+    method: "GET",
+    responseType: "text",
+    timeoutMs: 30000,
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache"
+    },
+    allowReferer: BASE + "/"
+  });
+  if (!res.ok) {
+    const cf = res.headers?.["cf-mitigated"] || res.headers?.["CF-Mitigated"];
+    const server = res.headers?.["server"] || res.headers?.["Server"];
+    if (cf === "challenge" || /cloudflare/i.test(server || "")) {
+      throw new Error("StellarSaber blocked this request by Cloudflare (HTTP " + res.status + "). Harbor cannot complete an interactive browser challenge.");
+    }
+    throw new Error("HTTP " + res.status + " while opening " + url);
+  }
+  const html = res.body || "";
+  if (/cf-chl-|challenge-platform|Just a moment\.\.\.|Enable JavaScript and cookies to continue/i.test(html)) {
+    throw new Error("StellarSaber returned a Cloudflare browser challenge. This Harbor source cannot execute that challenge.");
+  }
+  return harbor.parseHtml(html);
 }
 
 function mangaIdFromHref(href) {
