@@ -78,7 +78,9 @@ function imageFrom(img) {
 }
 
 function cardSummary(card) {
-  const link = card.querySelector("a[href*='/manga/']");
+  // The current archive markup uses the card itself as the anchor:
+  // <a class="card" href="/manga/slug/"> ... </a>
+  const link = card.attr("href") ? card : card.querySelector("a[href*='/manga/']");
   if (!link) return null;
   const href = link.attr("href");
   const id = slugFromUrl(href);
@@ -86,8 +88,9 @@ function cardSummary(card) {
   const title = clean(
     card.querySelector(".card__title")?.text() ||
     link.attr("title") ||
-    link.text() ||
-    card.querySelector("img")?.attr("alt")
+    card.querySelector(".card__title, .card-title, .manga-title")?.text() ||
+    card.querySelector("img")?.attr("alt") ||
+    link.text()
   );
   if (!title) return null;
   return { id, title, cover: imageFrom(card.querySelector("img")) };
@@ -96,7 +99,7 @@ function cardSummary(card) {
 function listFromDoc(doc) {
   const result = [];
   const seen = new Set();
-  for (const card of doc.querySelectorAll(".card-grid .card, div.archive-main .card")) {
+  for (const card of doc.querySelectorAll("div.archive-main div.card-grid a.card, .card-grid .card, div.archive-main .card")) {
     const item = cardSummary(card);
     if (!item || seen.has(item.id)) continue;
     seen.add(item.id);
