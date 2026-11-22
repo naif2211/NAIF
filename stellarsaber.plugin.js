@@ -106,7 +106,6 @@ function findCards(doc) {
         cards.push(card);
       }
     }
-    if (cards.length) break;
   }
   return cards;
 }
@@ -145,7 +144,6 @@ function chaptersFromDoc(doc) {
         language: "ar"
       });
     }
-    if (chapters.length) break;
   }
   return chapters.sort((a, b) => (parseFloat(b.chapter) || 0) - (parseFloat(a.chapter) || 0));
 }
