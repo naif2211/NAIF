@@ -125,7 +125,8 @@ function chaptersFromDoc(doc) {
     "li.wp-manga-chapter a[href]",
     ".version-chap li a[href]",
     ".wp-manga-chapter a[href]",
-    ".main.version-chap a[href]"
+    ".main.version-chap a[href]",
+    "a[href*='/chapter/']"
   ];
   for (const selector of selectors) {
     for (const link of doc.querySelectorAll(selector)) {
@@ -134,6 +135,7 @@ function chaptersFromDoc(doc) {
       const title = clean(link.text()) || clean(link.attr("title"));
       const chapter = chapterNumber(title, id);
       if (!title && !chapter) continue;
+      if (!chapter && !/(?:chapter|ch\\.?|الفصل)/i.test(title)) continue;
       seen.add(id);
       chapters.push({
         id,
@@ -156,6 +158,13 @@ function pageImages(doc) {
     seen.add(url);
     urls.push(url);
   };
+  // StellarSaber's current reader stores the real CDN image URL in data-cdn-url;
+  // src is only a transparent placeholder and must never be returned.
+  for (const image of doc.querySelectorAll(".reader__images img[data-cdn-url], img.reader__page[data-cdn-url]")) {
+    add(abs(image.attr("data-cdn-url")));
+  }
+  if (urls.length) return urls;
+
   const selectors = [
     ".reading-content .page-break img",
     ".reading-content img",
