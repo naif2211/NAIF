@@ -63,7 +63,7 @@ async function getDoc(path) {
 
 function imageFrom(img) {
   if (!img) return undefined;
-  for (const key of ["data-src", "data-lazy-src", "data-original", "data-cfsrc", "src"]) {
+  for (const key of ["data-cdn-url", "data-src", "data-lazy-src", "data-original", "data-cfsrc", "src"]) {
     const value = img.attr(key);
     if (value && !/^data:/i.test(value)) return abs(value);
   }
@@ -77,34 +77,36 @@ function imageFrom(img) {
   return undefined;
 }
 
-function cardSummary(card) {
-  // The current archive markup uses the card itself as the anchor:
-  // <a class="card" href="/manga/slug/"> ... </a>
-  const link = card.attr("href") ? card : card.querySelector("a[href*='/manga/']");
-  if (!link) return null;
+function cardSummary(link) {
   const href = link.attr("href");
   const id = slugFromUrl(href);
   if (!id) return null;
+
   const title = clean(
-    card.querySelector(".card__title")?.text() ||
+    link.querySelector(".card__title, .detail-info__title, .post-title, .manga-title, h2, h3")?.text() ||
     link.attr("title") ||
-    card.querySelector(".card__title, .card-title, .manga-title")?.text() ||
-    card.querySelector("img")?.attr("alt") ||
+    link.querySelector("img")?.attr("alt") ||
     link.text()
   );
   if (!title) return null;
-  return { id, title, cover: imageFrom(card.querySelector("img")) };
+
+  let cover = imageFrom(link.querySelector("img"));
+  return { id, title, cover };
 }
 
 function listFromDoc(doc) {
   const result = [];
   const seen = new Set();
-  for (const card of doc.querySelectorAll("div.archive-main div.card-grid a.card, .card-grid .card, div.archive-main .card")) {
-    const item = cardSummary(card);
+
+  // The current StellarSaber theme does not use the old Madara card-grid
+  // structure consistently. Collect manga permalinks directly instead.
+  for (const link of doc.querySelectorAll("a[href*='/manga/']")) {
+    const item = cardSummary(link);
     if (!item || seen.has(item.id)) continue;
     seen.add(item.id);
     result.push(item);
   }
+
   return result;
 }
 
@@ -174,35 +176,46 @@ function chaptersFromDoc(doc) {
   const output = [];
   const seen = new Set();
 
-  // Current site markup: normal chapter links and multi-team version containers.
-  for (const item of doc.querySelectorAll("a.chapter-item, div.chapter-item--multi")) {
-    const href = item.attr("href");
-    if (href) {
-      const title = clean(item.querySelector(".chapter-item__title")?.text() || item.text());
-      const team = clean(item.querySelector(".chapter-item__team")?.text());
-      const chapter = chapterEntry(href, title, team);
-      if (chapter && !seen.has(chapter.id)) {
-        seen.add(chapter.id);
-        output.push(chapter);
-      }
-      continue;
-    }
-
-    const rawVersions = item.attr("data-versions");
-    if (!rawVersions) continue;
+  function add(href, label, team) {
+    const url = abs(href);
+    if (!url || seen.has(url)) return;
+    let parsed;
     try {
-      const versions = JSON.parse(rawVersions);
-      if (!Array.isArray(versions)) continue;
-      for (const version of versions) {
-        const chapter = chapterEntry(version.url, version.title, version.team);
-        if (chapter && !seen.has(chapter.id)) {
-          seen.add(chapter.id);
-          output.push(chapter);
-        }
-      }
+      parsed = new URL(url);
     } catch (_) {
-      // Ignore malformed version metadata but keep other chapters.
+      return;
     }
+    if (parsed.hostname !== new URL(BASE).hostname) return;
+    if (!/\/chapter\//i.test(parsed.pathname)) return;
+
+    const title = clean(label);
+    const number = chapterNumber(title);
+    // A chapter link on this site is identified by its /chapter/ route;
+    // retain the full chapter title even when its number is written in Arabic.
+    output.push({
+      id: url,
+      chapter: number || title || null,
+      title: title || undefined,
+      pages: 0,
+      language: "ar",
+      group: clean(team) || undefined
+    });
+    seen.add(url);
+  }
+
+  for (const link of doc.querySelectorAll("a[href*='/chapter/']")) {
+    const title = clean(
+      link.querySelector(".chapter-item__title, .chapter-title, .chapter-name")?.text() ||
+      link.attr("title") ||
+      link.text()
+    );
+    const team = clean(link.querySelector(".chapter-item__team, .chapter-team")?.text());
+    add(link.attr("href"), title, team);
+  }
+
+  // Reader pages also expose the chapter list as a select element.
+  for (const option of doc.querySelectorAll("#reader-chapter-select option, select[name*='chapter'] option")) {
+    add(option.attr("value"), option.text());
   }
 
   return output;
