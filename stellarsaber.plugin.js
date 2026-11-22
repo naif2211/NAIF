@@ -1,214 +1,229 @@
-// Harbor source for stellarsaber.pro
-// The site is a WordPress/Madara catalogue with direct chapter permalinks.
+// Harbor manga source for StellarSaber (stellarsaber.pro)
+// Updated for the site's current Flavor/Madara markup and AJAX search.
 const BASE = "https://stellarsaber.pro";
-// Harbor requests the next page with offsets 0, 48, 96, ...
 const PAGE_SIZE = 48;
 
 function clean(value) {
-  return value ? String(value).replace(/\s+/g, " ").trim() : "";
+  return value == null ? "" : String(value).replace(/\s+/g, " ").trim();
 }
 
-function abs(url) {
-  if (!url) return undefined;
-  const value = String(url).trim();
-  if (!value || /^data:/i.test(value) || /^javascript:/i.test(value)) return undefined;
-  if (/^https?:\/\//i.test(value)) return value;
-  if (value.startsWith("//")) return "https:" + value;
-  if (value.startsWith("/")) return BASE + value;
-  return BASE + "/" + value;
+function abs(value) {
+  if (!value) return undefined;
+  const url = String(value).trim();
+  if (!url || /^(?:data|javascript):/i.test(url)) return undefined;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("//")) return "https:" + url;
+  if (url.startsWith("/")) return BASE + url;
+  return BASE + "/" + url;
 }
 
-async function getDoc(path) {
-  const url = /^https?:\/\//i.test(path) ? path : BASE + path;
-  const res = await harbor.http(url, {
-    method: "GET",
-    responseType: "text",
-    timeoutMs: 30000,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-      "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
-      "Cache-Control": "no-cache",
-      "Pragma": "no-cache"
-    },
-    allowReferer: BASE + "/"
-  });
-  if (!res.ok) {
-    const cf = res.headers?.["cf-mitigated"] || res.headers?.["CF-Mitigated"];
-    const server = res.headers?.["server"] || res.headers?.["Server"];
-    if (cf === "challenge" || /cloudflare/i.test(server || "")) {
-      throw new Error("StellarSaber blocked this request by Cloudflare (HTTP " + res.status + "). Harbor cannot complete an interactive browser challenge.");
-    }
-    throw new Error("HTTP " + res.status + " while opening " + url);
-  }
-  const html = res.body || "";
-  if (/cf-chl-|challenge-platform|Just a moment\.\.\.|Enable JavaScript and cookies to continue/i.test(html)) {
-    throw new Error("StellarSaber returned a Cloudflare browser challenge. This Harbor source cannot execute that challenge.");
-  }
-  return harbor.parseHtml(html);
-}
-
-function mangaIdFromHref(href) {
-  const url = abs(href);
+function slugFromUrl(value) {
+  const url = abs(value);
   if (!url) return null;
   try {
-    const parsed = new URL(url, BASE);
+    const parsed = new URL(url);
     if (parsed.hostname !== new URL(BASE).hostname) return null;
-    const match = parsed.pathname.match(/^\/manga\/([^/?#]+)\/?$/i);
-    return match ? decodeURIComponent(match[1]) : null;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts[0] !== "manga" || !parts[1]) return null;
+    return decodeURIComponent(parts[1]);
   } catch (_) {
     return null;
   }
 }
 
-function firstText(root, selectors) {
-  for (const selector of selectors) {
-    const value = clean(root?.querySelector(selector)?.text());
-    if (value) return value;
+async function request(path, options) {
+  const url = /^https?:\/\//i.test(path) ? path : BASE + path;
+  const response = await harbor.http(url, {
+    method: options?.method || "GET",
+    responseType: options?.responseType || "text",
+    timeoutMs: 30000,
+    headers: {
+      "Accept": options?.accept || "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+      "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+      ...(options?.headers || {})
+    },
+    body: options?.body
+  });
+  if (!response || response.ok === false) {
+    const status = response?.status ?? "network error";
+    throw new Error("StellarSaber request failed (" + status + "): " + url);
   }
-  return undefined;
+  return response;
 }
 
-function firstImage(root) {
-  for (const image of root?.querySelectorAll("img") || []) {
-    const url = imageUrl(image);
-    if (url) return url;
+async function getDoc(path) {
+  const response = await request(path);
+  const html = response.body || "";
+  if (/cf-chl-|challenge-platform|Just a moment\.\.\.|Enable JavaScript and cookies to continue/i.test(html)) {
+    throw new Error("StellarSaber returned a Cloudflare challenge. Harbor's isolated source cannot solve an interactive browser challenge.");
   }
-  return undefined;
+  return harbor.parseHtml(html);
 }
 
-function imageUrl(img) {
+function imageFrom(img) {
   if (!img) return undefined;
-  for (const attr of [
-    "data-src", "data-lazy-src", "data-original", "data-cfsrc", "data-lazy",
-    "data-image", "data-full", "src"
-  ]) {
-    const value = img.attr(attr);
+  for (const key of ["data-src", "data-lazy-src", "data-original", "data-cfsrc", "src"]) {
+    const value = img.attr(key);
     if (value && !/^data:/i.test(value)) return abs(value);
   }
-  for (const attr of ["data-srcset", "srcset"]) {
-    const srcset = img.attr(attr);
-    if (!srcset) continue;
-    const first = srcset.split(",")[0].trim().split(/\s+/)[0];
-    if (first && !/^data:/i.test(first)) return abs(first);
+  for (const key of ["data-srcset", "srcset"]) {
+    const value = img.attr(key);
+    if (value) {
+      const candidate = value.split(",")[0].trim().split(/\s+/)[0];
+      if (candidate && !/^data:/i.test(candidate)) return abs(candidate);
+    }
   }
   return undefined;
 }
 
-function cardFromElement(el) {
-  const link = el.querySelector(".post-title a, .item-summary a[href*='/manga/'], a[href*='/manga/']");
+function cardSummary(card) {
+  const link = card.querySelector("a[href*='/manga/']");
   if (!link) return null;
-  const id = mangaIdFromHref(link.attr("href"));
+  const href = link.attr("href");
+  const id = slugFromUrl(href);
   if (!id) return null;
   const title = clean(
+    card.querySelector(".card__title")?.text() ||
     link.attr("title") ||
-    firstText(el, [".post-title", ".item-summary h3", ".summary_content h3", "h3", "h2"]) ||
-    link.text()
+    link.text() ||
+    card.querySelector("img")?.attr("alt")
   );
   if (!title) return null;
-  return { id, title, cover: firstImage(el) };
+  return { id, title, cover: imageFrom(card.querySelector("img")) };
 }
 
-function findCards(doc) {
-  const cards = [];
+function listFromDoc(doc) {
+  const result = [];
   const seen = new Set();
-  const selectors = [
-    ".c-tabs-item__content",
-    ".page-item-detail.manga",
-    ".page-item-detail",
-    ".row.c-tabs-item__content",
-    ".manga-item",
-    ".manga__item",
-    ".item-summary"
-  ];
-  for (const selector of selectors) {
-    for (const el of doc.querySelectorAll(selector)) {
-      const card = cardFromElement(el);
-      if (card && !seen.has(card.id)) {
-        seen.add(card.id);
-        cards.push(card);
-      }
-    }
+  for (const card of doc.querySelectorAll(".card-grid .card, div.archive-main .card")) {
+    const item = cardSummary(card);
+    if (!item || seen.has(item.id)) continue;
+    seen.add(item.id);
+    result.push(item);
   }
-  return cards;
+  return result;
 }
 
-function chapterNumber(title, href) {
-  const source = clean(title) || decodeURIComponent(String(href || ""));
-  let match = source.match(/(?:chapter|ch\.?)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i);
-  if (!match) match = source.match(/(?:^|[-_\s/])([0-9]+(?:\.[0-9]+)?)(?:[-_\s/?#]|$)/);
-  return match ? match[1] : undefined;
+function extractNonce(html) {
+  const patterns = [
+    /nonce\s*["']?\s*:\s*["']([^"']+)["']/i,
+    /nonce\\["']?\s*:\s*\\["']([^"']+)\\["']/i,
+    /["']nonce["']\s*,\s*["']([^"']+)["']/i
+  ];
+  for (const pattern of patterns) {
+    const match = String(html || "").match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  throw new Error("StellarSaber search nonce was not found in the page HTML.");
+}
+
+async function getNonce() {
+  const response = await request("/manga/");
+  const html = response.body || "";
+  if (/cf-chl-|challenge-platform|Just a moment\.\.\./i.test(html)) {
+    throw new Error("StellarSaber returned a Cloudflare challenge while loading its search token.");
+  }
+  return extractNonce(html);
+}
+
+function mapSearchResults(payload) {
+  const data = payload?.data ?? payload;
+  const results = Array.isArray(data?.results) ? data.results :
+    Array.isArray(data?.data?.results) ? data.data.results : [];
+  const items = [];
+  const seen = new Set();
+  for (const result of results) {
+    if (!result || /^(novel|anime)$/i.test(String(result.type || ""))) continue;
+    const id = slugFromUrl(result.url || result.permalink || "");
+    const title = clean(result.title || result.name);
+    if (!id || !title || seen.has(id)) continue;
+    seen.add(id);
+    items.push({ id, title, cover: abs(result.cover || result.image || result.thumbnail) });
+  }
+  return items;
+}
+
+function chapterNumber(value) {
+  const text = clean(value);
+  const match =
+    text.match(/(?:الفصل|chapter|ch\.?)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) ||
+    text.match(/(?:^|[\s_-])([0-9]+(?:\.[0-9]+)?)(?:$|[\s_-])/);
+  return match ? match[1] : null;
+}
+
+function chapterEntry(id, title, team) {
+  const url = abs(id);
+  if (!url) return null;
+  const label = clean(title);
+  const number = chapterNumber(label);
+  return {
+    id: url,
+    chapter: number || label || null,
+    title: label || undefined,
+    pages: 0,
+    language: "ar",
+    group: clean(team) || undefined
+  };
 }
 
 function chaptersFromDoc(doc) {
-  const chapters = [];
+  const output = [];
   const seen = new Set();
-  // Chapter URLs here are top-level permalinks, not /chapter/... paths.
-  const selectors = [
-    "li.wp-manga-chapter a[href]",
-    ".version-chap li a[href]",
-    ".wp-manga-chapter a[href]",
-    ".main.version-chap a[href]",
-    "a[href*='/chapter/']"
-  ];
-  for (const selector of selectors) {
-    for (const link of doc.querySelectorAll(selector)) {
-      const id = abs(link.attr("href"));
-      if (!id || seen.has(id)) continue;
-      const title = clean(link.text()) || clean(link.attr("title"));
-      const chapter = chapterNumber(title, id);
-      if (!title && !chapter) continue;
-      if (!chapter && !/(?:chapter|ch\\.?|الفصل)/i.test(title)) continue;
-      seen.add(id);
-      chapters.push({
-        id,
-        chapter: chapter || title,
-        title: title || (chapter ? "Chapter " + chapter : undefined),
-        volume: null,
-        pages: 0,
-        language: "ar"
-      });
+
+  // Current site markup: normal chapter links and multi-team version containers.
+  for (const item of doc.querySelectorAll("a.chapter-item, div.chapter-item--multi")) {
+    const href = item.attr("href");
+    if (href) {
+      const title = clean(item.querySelector(".chapter-item__title")?.text() || item.text());
+      const team = clean(item.querySelector(".chapter-item__team")?.text());
+      const chapter = chapterEntry(href, title, team);
+      if (chapter && !seen.has(chapter.id)) {
+        seen.add(chapter.id);
+        output.push(chapter);
+      }
+      continue;
+    }
+
+    const rawVersions = item.attr("data-versions");
+    if (!rawVersions) continue;
+    try {
+      const versions = JSON.parse(rawVersions);
+      if (!Array.isArray(versions)) continue;
+      for (const version of versions) {
+        const chapter = chapterEntry(version.url, version.title, version.team);
+        if (chapter && !seen.has(chapter.id)) {
+          seen.add(chapter.id);
+          output.push(chapter);
+        }
+      }
+    } catch (_) {
+      // Ignore malformed version metadata but keep other chapters.
     }
   }
-  return chapters.sort((a, b) => (parseFloat(b.chapter) || 0) - (parseFloat(a.chapter) || 0));
+
+  return output;
 }
 
-function pageImages(doc) {
-  const urls = [];
+function readerImageUrls(doc) {
+  const images = [];
   const seen = new Set();
-  const add = url => {
-    if (!url || seen.has(url)) return;
-    seen.add(url);
-    urls.push(url);
-  };
-  // StellarSaber's current reader stores the real CDN image URL in data-cdn-url;
-  // src is only a transparent placeholder and must never be returned.
-  const cdnPages = [];
-  for (const image of doc.querySelectorAll(".reader__images img[data-cdn-url], img.reader__page[data-cdn-url]")) {
-    const url = abs(image.attr("data-cdn-url"));
-    if (!url) continue;
-    const page = Number(image.attr("data-page"));
-    cdnPages.push({ url, page: Number.isFinite(page) && page > 0 ? page : cdnPages.length + 1 });
+  for (const img of doc.querySelectorAll("img[data-cdn-url], .reader__images img[data-cdn-url], img.reader__page[data-cdn-url]")) {
+    const url = abs(img.attr("data-cdn-url"));
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      images.push(url);
+    }
   }
-  cdnPages.sort((a, b) => a.page - b.page);
-  for (const item of cdnPages) add(item.url);
-  if (urls.length) return urls;
+  return images;
+}
 
-  const selectors = [
-    ".reading-content .page-break img",
-    ".reading-content img",
-    ".wp-manga-chapter-img img",
-    ".page-break img",
-    ".chapter-content img",
-    ".entry-content .page-break img"
-  ];
+function textFrom(root, selectors) {
   for (const selector of selectors) {
-    for (const image of doc.querySelectorAll(selector)) add(imageUrl(image));
-    if (urls.length) return urls;
+    const value = clean(root.querySelector(selector)?.text());
+    if (value) return value;
   }
-  // Some StellarSaber chapters are plain WordPress posts without Madara wrappers.
-  for (const image of doc.querySelectorAll("article .entry-content img, article .post-content img")) add(imageUrl(image));
-  return urls;
+  return undefined;
 }
 
 const plugin = {
@@ -216,39 +231,84 @@ const plugin = {
   name: "StellarSaber",
 
   async popular(offset) {
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    return findCards(await getDoc("/manga/?m_orderby=latest&page=" + page)).slice(0, PAGE_SIZE);
+    const page = Math.floor(Math.max(0, Number(offset) || 0) / PAGE_SIZE) + 1;
+    const path = page === 1
+      ? "/manga/?sort=rating"
+      : "/manga/page/" + page + "/?sort=rating";
+    return listFromDoc(await getDoc(path));
   },
 
   async search(query, offset) {
     const term = clean(query);
     if (!term) return [];
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const path = "/manga/?s=" + encodeURIComponent(term) + "&post_type=wp-manga&page=" + page;
-    return findCards(await getDoc(path)).slice(0, PAGE_SIZE);
+    const page = Math.floor(Math.max(0, Number(offset) || 0) / PAGE_SIZE) + 1;
+    const nonce = await getNonce();
+    const body = new URLSearchParams({
+      action: "flavor_ajax_filter_content",
+      nonce,
+      page: String(page),
+      keyword: term
+    }).toString();
+
+    const response = await request("/wp-admin/admin-ajax.php", {
+      method: "POST",
+      responseType: "json",
+      accept: "application/json, text/javascript, */*;q=0.01",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body
+    });
+
+    let items = mapSearchResults(response.body);
+    if (items.length) return items;
+
+    // Some WordPress configurations return HTML instead of JSON.
+    if (typeof response.body === "string" && response.body.trim().startsWith("<")) {
+      return listFromDoc(await harbor.parseHtml(response.body));
+    }
+    return [];
   },
 
   async detail(id) {
-    const doc = await getDoc("/manga/" + encodeURIComponent(id) + "/");
-    const root = doc.querySelector(".site-content") || doc;
+    const slug = String(id || "").replace(/^\/+|\/+$/g, "");
+    const doc = await getDoc("/manga/" + encodeURIComponent(slug) + "/");
+    const root = doc.querySelector(".detail-content") || doc;
+    const cover = imageFrom(root.querySelector(".detail-poster img")) ||
+      imageFrom(root.querySelector(".summary_image img")) ||
+      imageFrom(root.querySelector("img"));
+    const chapters = chaptersFromDoc(doc);
+
     return {
-      id,
-      title: firstText(root, [".post-title h1", ".post-title", "h1.entry-title", "h1"]) || id,
-      cover: firstImage(root.querySelector(".summary_image, .manga-thumb, .profile-manga, .tab-summary") || root),
-      description: firstText(root, [".summary__content", ".description-summary", ".summary_content", ".post-content", ".entry-content"])
+      id: slug,
+      title: textFrom(root, [".detail-info__title", ".post-title h1", "h1.entry-title", "h1"]) || slug,
+      altTitle: textFrom(root, [".detail-info__alt-title", ".alt-title"]) || undefined,
+      cover,
+      description: textFrom(root, ["#detail-desc", ".summary__content", ".description-summary", ".summary_content"]) || undefined,
+      author: textFrom(root, [".detail-meta__value", ".author-content", ".author"]) || undefined,
+      status: textFrom(root, [".detail-status", ".status"]) || undefined,
+      lastChapter: chapters.length ? chapters[0].title : undefined
     };
   },
 
   async chapters(id) {
-    return chaptersFromDoc(await getDoc("/manga/" + encodeURIComponent(id) + "/"));
+    const slug = String(id || "").replace(/^\/+|\/+$/g, "");
+    const doc = await getDoc("/manga/" + encodeURIComponent(slug) + "/");
+    return chaptersFromDoc(doc);
   },
 
   async pageUrls(chapterId) {
-    const urls = pageImages(await getDoc(chapterId));
-    if (!urls.length) throw new Error("No chapter page images found");
+    const doc = await getDoc(chapterId);
+    const urls = readerImageUrls(doc);
+    if (!urls.length) {
+      throw new Error("No reader images found. StellarSaber may have changed its reader markup or blocked the request.");
+    }
+    // StellarSaber encrypts CDN image bytes with AES-GCM and supplies the key
+    // through flavor_cdn_get_key. Harbor's pageUrls contract currently accepts
+    // URLs only, so it cannot perform the site's required binary image decryption.
     return urls;
   }
 };
 
-return plugin;
-
+harbor.register(plugin);
