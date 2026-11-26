@@ -1,6 +1,7 @@
 // Harbor manga source for StellarSaber (stellarsaber.pro)
 // Updated for the site's current Flavor/Madara markup and AJAX search.
 const BASE = "https://stellarsaber.pro";
+const PROXY = "http://127.0.0.1:8787";
 const PAGE_SIZE = 48;
 
 function clean(value) {
@@ -326,10 +327,11 @@ const plugin = {
     if (!urls.length) {
       throw new Error("No reader images found. StellarSaber may have changed its reader markup or blocked the request.");
     }
-    // StellarSaber encrypts CDN image bytes with AES-GCM and supplies the key
-    // through flavor_cdn_get_key. Harbor's pageUrls contract currently accepts
-    // URLs only, so it cannot perform the site's required binary image decryption.
-    return urls;
+    // The Windows helper fetches and decrypts the image, then serves the
+    // resulting image bytes to Harbor over localhost.
+    return urls.map(url =>
+      PROXY + "/?img=" + encodeURIComponent(url) + "&ch=" + encodeURIComponent(chapterId)
+    );
   }
 };
 
