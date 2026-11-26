@@ -151,13 +151,16 @@ function mapSearchResults(payload) {
 }
 
 function chapterNumber(value) {
-  const text = clean(value);
+  // Normalize Arabic-Indic and Persian digits before extracting the chapter number.
+  const text = clean(value).replace(/[٠-٩۰-۹]/g, digit => {
+    const code = digit.charCodeAt(0);
+    return String(code >= 0x06F0 ? code - 0x06F0 : code - 0x0660);
+  });
   const match =
-    text.match(/(?:الفصل|chapter|ch\.?)\s*#?\s*([0-9]+(?:\.[0-9]+)?)/i) ||
-    text.match(/(?:^|[\s_-])([0-9]+(?:\.[0-9]+)?)(?:$|[\s_-])/);
+    text.match(/(?:الفصل|فصل|chapter|ch\\.?)\\s*#?\\s*([0-9]+(?:\\.[0-9]+)?)/i) ||
+    text.match(/(?:^|[\\s_#-])([0-9]+(?:\\.[0-9]+)?)(?:$|[\\s_-])/);
   return match ? match[1] : null;
 }
-
 function chapterEntry(id, title, team) {
   const url = abs(id);
   if (!url) return null;
