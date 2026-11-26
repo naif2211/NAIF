@@ -1,5 +1,5 @@
 // Harbor manga source for StellarSaber (stellarsaber.pro)
-// Updated: Full chapter pagination + AJAX chapter loader + AES-GCM proxy support
+// Stable version: Full catalog listing + AES-GCM decryption proxy
 const BASE = "https://stellarsaber.pro";
 const PROXY = "http://localhost:8787";
 const PAGE_SIZE = 48;
@@ -156,26 +156,23 @@ function chaptersFromDoc(doc) {
 
   function add(href, label, team) {
     const url = abs(href);
-    if (!url) return;
+    if (!url || seen.has(url)) return;
     let parsed;
     try { parsed = new URL(url); } catch (_) { return; }
     if (parsed.hostname !== new URL(BASE).hostname) return;
     if (!/\/chapter\//i.test(parsed.pathname)) return;
 
-    const cleanUrl = parsed.origin + parsed.pathname;
-    if (seen.has(cleanUrl)) return;
-
     const title = clean(label);
-    const number = chapterNumber(title) || chapterNumber(decodeURIComponent(parsed.pathname));
+    const number = chapterNumber(title);
     output.push({
-      id: cleanUrl,
+      id: url,
       chapter: number || title || null,
       title: title || undefined,
       pages: 0,
       language: "ar",
       group: clean(team) || undefined
     });
-    seen.add(cleanUrl);
+    seen.add(url);
   }
 
   for (const link of doc.querySelectorAll("a[href*='/chapter/']")) {
@@ -188,7 +185,7 @@ function chaptersFromDoc(doc) {
     add(link.attr("href"), title, team);
   }
 
-  for (const option of doc.querySelectorAll("#reader-chapter-select option, select[name*='chapter'] option, select.chapter-select option")) {
+  for (const option of doc.querySelectorAll("#reader-chapter-select option, select[name*='chapter'] option")) {
     add(option.attr("value"), option.text());
   }
 
@@ -228,7 +225,9 @@ const plugin = {
 
   async popular(offset) {
     const page = Math.floor(Math.max(0, Number(offset) || 0) / PAGE_SIZE) + 1;
-    const path = page === 1 ? "/manga/?sort=updated" : "/manga/page/" + page + "/?sort=updated";
+    const path = page === 1
+      ? "/manga/?sort=rating"
+      : "/manga/page/" + page + "/?sort=rating";
     return listFromDoc(await getDoc(path));
   },
 
@@ -293,79 +292,8 @@ const plugin = {
 
   async chapters(id) {
     const slug = String(id || "").replace(/^\/+|\/+$/g, "");
-    const mangaPath = "/manga/" + encodeURIComponent(slug) + "/";
-    const response = await request(mangaPath);
-    const html = response.body || "";
-    const doc = await harbor.parseHtml(html);
-
-    const map = new Map();
-    const merge = (items) => {
-      for (const item of items) {
-        if (!map.has(item.id)) map.set(item.id, item);
-      }
-    };
-
-    // 1. جمع الفصول الظاهرة في صفحة العمل
-    merge(chaptersFromDoc(doc));
-
-    // 2. محاولة جلب بقية الفصول عبر طلب AJAX الخاص بالقالب (flavor_load_chapters / ajax/chapters)
-    try {
-      const postId = doc.querySelector("[data-post-id], [data-manga-id], [data-id]")?.attr("data-post-id") ||
-        html.match(/post_id["']?\s*[:=]\s*["']?(\d+)/i)?.[1] || "";
-      const nonce = extractNonce(html);
-
-      if (postId) {
-        for (const action of ["flavor_load_more_chapters", "flavor_ajax_chapters", "manga_get_chapters"]) {
-          const ajaxRes = await request("/wp-admin/admin-ajax.php", {
-            method: "POST",
-            responseType: "text",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-              "X-Requested-With": "XMLHttpRequest",
-              "Referer": BASE + mangaPath
-            },
-            body: new URLSearchParams({
-              action,
-              nonce,
-              post_id: postId,
-              manga_id: postId,
-              page: "1",
-              limit: "1000"
-            }).toString()
-          });
-          const bodyStr = typeof ajaxRes.body === "string" ? ajaxRes.body : JSON.stringify(ajaxRes.body);
-          if (bodyStr && bodyStr.includes("/chapter/")) {
-            let htmlFrag = bodyStr;
-            try {
-              const parsed = JSON.parse(bodyStr);
-              htmlFrag = parsed?.data?.html || parsed?.data || parsed?.html || bodyStr;
-            } catch (_) {}
-            merge(chaptersFromDoc(await harbor.parseHtml(String(htmlFrag))));
-            if (map.size > 20) break;
-          }
-        }
-      }
-    } catch (_) {}
-
-    // 3. دمج قائمة الفصول من القائمة المنسدلة داخل القارئ (إن وجدت)
-    const current = Array.from(map.values());
-    if (current.length > 0) {
-      try {
-        const readerDoc = await getDoc(current[0].id);
-        merge(chaptersFromDoc(readerDoc));
-      } catch (_) {}
-    }
-
-    // 4. ترتيب الفصول تنازلياً من الأحدث للأقدم
-    const finalList = Array.from(map.values());
-    finalList.sort((a, b) => {
-      const na = parseFloat(a.chapter);
-      const nb = parseFloat(b.chapter);
-      if (!isNaN(na) && !isNaN(nb) && na !== nb) return nb - na;
-      return 0;
-    });
-
-    return finalList;
+    const doc = await getDoc("/manga/" + encodeURIComponent(slug) + "/");
+    return chaptersFromDoc(doc);
   },
 
   async pageUrls(chapterId) {
