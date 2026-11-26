@@ -1,7 +1,7 @@
 // Harbor manga source for StellarSaber (stellarsaber.pro)
 // Stable version: Full catalog listing + AES-GCM decryption proxy
 const BASE = "https://stellarsaber.pro";
-const PROXY = "http://localhost:8787";
+const PROXY = "https://harbor.naif-com070.workers.dev";
 const PAGE_SIZE = 48;
 
 function clean(value) {
