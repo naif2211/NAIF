@@ -24,11 +24,20 @@
     {
       "id": "stellarsaber",
       "name": "StellarSaber",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "lang": "ar",
       "nsfw": false,
       "icon": "https://stellarsaber.pro/favicon.ico",
       "entry": "stellarsaber.plugin.js"
+    },
+    {
+      "id": "stellarsaber-legacy",
+      "name": "StellarSaber (Legacy)",
+      "version": "1.0.6",
+      "lang": "ar",
+      "nsfw": false,
+      "icon": "https://stellarsaber.pro/favicon.ico",
+      "entry": "stellarsaber-legacy.plugin.js"
     },
     {
       "id": "mangatime",
